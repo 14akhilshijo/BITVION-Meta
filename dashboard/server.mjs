@@ -43,7 +43,12 @@ function broadcast(event, data) {
   for (const client of clients) client.write(payload);
 }
 
+let pulseAt = 0;
+let quietUntil = 0;
+
 async function pulse() {
+  if (Date.now() < quietUntil) return pulseCache;
+  if (pulseCache && Date.now() - pulseAt < 180000) return pulseCache;
   if (pulseInflight || inflight || !cache?.data) return pulseCache;
   const goals = new Map((cache?.data?.strategies || []).map((strategy) => [strategy.id, strategy.goal]));
   pulseInflight = pulseToday(env, goals)
@@ -61,12 +66,14 @@ async function pulse() {
       if (fresh.length) arrivals = [...fresh.reverse(), ...arrivals].slice(0, 40);
       data.arrivals = arrivals;
       pulseCache = data;
+      pulseAt = Date.now();
       broadcast("pulse", data);
       console.log(`PULSE today=${data.todayLeads} new=${fresh.reduce((sum, row) => sum + row.delta, 0)}`);
       return data;
     })
     .catch((error) => {
       console.error("PULSE_FAILED", error.message);
+      if (/limit/i.test(error.message || "")) quietUntil = Date.now() + 10 * 60 * 1000;
       return pulseCache;
     })
     .finally(() => {
@@ -90,6 +97,7 @@ async function refresh(target = 60) {
     .catch((error) => {
       lastError = error.message || "Snapshot failed";
       console.error("SNAPSHOT_FAILED", lastError);
+      if (/limit/i.test(lastError)) quietUntil = Date.now() + 10 * 60 * 1000;
       throw error;
     })
     .finally(() => {
@@ -113,10 +121,16 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/api/live") {
     try {
       const target = Number(url.searchParams.get("target") || 60);
-      const data =
-        cache && cache.target === target && Date.now() - cache.at < 50000
-          ? cache.data
-          : await refresh(target);
+      let data = cache && cache.target === target && Date.now() - cache.at < 180000 ? cache.data : null;
+      if (!data && Date.now() < quietUntil && cache?.data) data = cache.data;
+      if (!data) {
+        try {
+          data = await refresh(target);
+        } catch (error) {
+          if (cache?.data) data = cache.data;
+          else throw error;
+        }
+      }
       res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
       res.end(JSON.stringify(data));
     } catch (error) {
@@ -183,9 +197,11 @@ server.listen(port, "127.0.0.1", () => {
 });
 
 setInterval(() => {
+  if (Date.now() < quietUntil) return;
   refresh(cache?.target || 60).catch(() => {});
-}, 90000);
+}, 180000);
 
 setInterval(() => {
+  if (Date.now() < quietUntil) return;
   pulse().catch(() => {});
-}, 20000);
+}, 180000);

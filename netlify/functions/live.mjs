@@ -1,11 +1,14 @@
 import { buildSnapshot } from "../../dashboard/snapshot.mjs";
 import { metaEnv } from "../lib/env.mjs";
+import { cached, failed, hold, limited } from "../lib/hold.mjs";
+
+const snapshot = hold();
 
 export default async () => {
   try {
-    const data = await buildSnapshot(metaEnv(), 60);
-    return Response.json(data, { headers: { "cache-control": "no-store" } });
+    return cached(await snapshot.load(() => buildSnapshot(metaEnv(), 60)));
   } catch (error) {
-    return Response.json({ error: error.message || "Snapshot failed" }, { status: 502, headers: { "cache-control": "no-store" } });
+    if (snapshot.current() && limited(error)) return cached(snapshot.current());
+    return failed(error);
   }
 };

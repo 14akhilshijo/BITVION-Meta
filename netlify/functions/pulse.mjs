@@ -1,7 +1,9 @@
 import { pulseToday } from "../../dashboard/pulse.mjs";
 import { metaEnv } from "../lib/env.mjs";
+import { cached, failed, hold, limited } from "../lib/hold.mjs";
 
 const ACT = "act_975152708626051";
+const pulse = hold();
 
 async function goalsFor(env) {
   const version = env.META_API_VERSION || "v21.0";
@@ -17,11 +19,14 @@ async function goalsFor(env) {
 
 export default async () => {
   try {
-    const env = metaEnv();
-    if (!env.META_ACCESS_TOKEN) throw new Error("Missing access token");
-    const data = await pulseToday(env, await goalsFor(env));
-    return Response.json(data, { headers: { "cache-control": "no-store" } });
+    const data = await pulse.load(async () => {
+      const env = metaEnv();
+      if (!env.META_ACCESS_TOKEN) throw new Error("Missing access token");
+      return pulseToday(env, await goalsFor(env));
+    });
+    return cached(data);
   } catch (error) {
-    return Response.json({ error: error.message || "Pulse failed" }, { status: 502, headers: { "cache-control": "no-store" } });
+    if (pulse.current() && limited(error)) return cached(pulse.current());
+    return failed(error);
   }
 };

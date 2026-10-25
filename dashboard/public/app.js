@@ -382,14 +382,14 @@ function ideasHtml(data) {
 }
 
 function render(data) {
-  latestData = data;
   if (data.error) {
     live.className = "live wait";
-    live.textContent = "Offline";
+    live.textContent = "Resting";
     synced.textContent = data.error;
-    app.innerHTML = `<section class="error">${data.error}</section>`;
+    if (!latestData || latestData.error) app.innerHTML = `<section class="error">${data.error}</section>`;
     return;
   }
+  latestData = data;
 
   live.className = "live";
   live.textContent = "Live";
@@ -519,17 +519,26 @@ function startPoll() {
   if (usingPoll) return;
   usingPoll = true;
   const seen = new Map();
-  const load = async () => {
-    const response = await fetch("/api/live", { cache: "no-store" });
-    const data = await response.json();
+  let quietUntil = 0;
+  const resting = (data) => {
+    if (!/limit/i.test(data?.error || "")) return false;
+    quietUntil = Date.now() + 10 * 60 * 1000;
     render(data);
-    live.className = "live";
-    live.textContent = "Live";
+    return true;
+  };
+  const load = async () => {
+    if (Date.now() < quietUntil) return false;
+    const response = await fetch("/api/live");
+    const data = await response.json();
+    if (resting(data)) return false;
+    render(data);
+    return !data.error;
   };
   const tick = async () => {
-    const response = await fetch("/api/pulse", { cache: "no-store" });
+    if (Date.now() < quietUntil) return;
+    const response = await fetch("/api/pulse");
     const data = await response.json();
-    if (data.error) return;
+    if (resting(data) || data.error) return;
     const primed = seen.size > 0;
     const fresh = [];
     for (const row of data.hours || []) {
@@ -542,14 +551,16 @@ function startPoll() {
     applyPulse(data);
   };
   load()
-    .then(() => tick())
+    .then((ok) => {
+      if (ok) return tick();
+    })
     .catch((error) => {
-    live.className = "live wait";
-    live.textContent = "Offline";
-    synced.textContent = error.message || "Meta did not answer";
-  });
-  setInterval(() => load().catch(() => {}), 90000);
-  setInterval(() => tick().catch(() => {}), 25000);
+      live.className = "live wait";
+      live.textContent = "Resting";
+      synced.textContent = error.message || "Meta did not answer";
+    });
+  setInterval(() => load().catch(() => {}), 180000);
+  setInterval(() => tick().catch(() => {}), 180000);
 }
 
 function connect() {
