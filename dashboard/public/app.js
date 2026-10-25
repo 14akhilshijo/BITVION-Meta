@@ -613,6 +613,7 @@ function startPoll() {
     const response = await fetch("/api/live");
     const data = await response.json();
     if (resting(data)) return false;
+    if (!data.error && data.generatedAt && data.generatedAt === latestData?.generatedAt) return true;
     render(data);
     return !data.error;
   };
@@ -630,6 +631,7 @@ function startPoll() {
       seen.set(key, row.leads);
     }
     data.arrivals = fresh;
+    if (data.generatedAt && data.generatedAt === latestPulse?.generatedAt && fresh.length === 0) return;
     applyPulse(data);
   };
   load()
@@ -641,8 +643,8 @@ function startPoll() {
       live.textContent = "Resting";
       synced.textContent = error.message || "Meta did not answer";
     });
-  setInterval(() => load().catch(() => {}), 180000);
-  setInterval(() => tick().catch(() => {}), 180000);
+  setInterval(() => load().catch(() => {}), 20000);
+  setInterval(() => tick().catch(() => {}), 20000);
 }
 
 function connect() {

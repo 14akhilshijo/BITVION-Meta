@@ -48,7 +48,7 @@ let quietUntil = 0;
 
 async function pulse() {
   if (Date.now() < quietUntil) return pulseCache;
-  if (pulseCache && Date.now() - pulseAt < 180000) return pulseCache;
+  if (pulseCache && Date.now() - pulseAt < 90000) return pulseCache;
   if (pulseInflight || inflight || !cache?.data) return pulseCache;
   const goals = new Map((cache?.data?.strategies || []).map((strategy) => [strategy.id, strategy.goal]));
   pulseInflight = pulseToday(env, goals)
@@ -121,7 +121,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/api/live") {
     try {
       const target = Number(url.searchParams.get("target") || 60);
-      let data = cache && cache.target === target && Date.now() - cache.at < 180000 ? cache.data : null;
+      let data = cache && cache.target === target && Date.now() - cache.at < 90000 ? cache.data : null;
       if (!data && Date.now() < quietUntil && cache?.data) data = cache.data;
       if (!data) {
         try {
@@ -199,9 +199,9 @@ server.listen(port, "127.0.0.1", () => {
 setInterval(() => {
   if (Date.now() < quietUntil) return;
   refresh(cache?.target || 60).catch(() => {});
-}, 180000);
+}, 90000);
 
 setInterval(() => {
   if (Date.now() < quietUntil) return;
   pulse().catch(() => {});
-}, 180000);
+}, 90000);

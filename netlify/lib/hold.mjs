@@ -1,4 +1,4 @@
-const FRESH_MS = 180000;
+const FRESH_MS = 90000;
 
 export function limited(error) {
   return /limit/i.test(error?.message || "");
@@ -40,7 +40,7 @@ export function cached(data) {
   return Response.json(data, {
     headers: {
       "cache-control": "public, max-age=0, must-revalidate",
-      "netlify-cdn-cache-control": "public, max-age=180, stale-while-revalidate=120",
+      "netlify-cdn-cache-control": "public, max-age=90, stale-while-revalidate=60",
     },
   });
 }

@@ -33,4 +33,4 @@
   for = "/api/*"
   [headers.values]
     Cache-Control = "public, max-age=0, must-revalidate"
-    Netlify-CDN-Cache-Control = "public, max-age=180, stale-while-revalidate=120"
+    Netlify-CDN-Cache-Control = "public, max-age=90, stale-while-revalidate=60"
