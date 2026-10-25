@@ -1,0 +1,27 @@
+[build]
+  publish = "dashboard/public"
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+[functions.live]
+  timeout = 26
+
+[functions.pulse]
+  timeout = 26
+
+[[redirects]]
+  from = "/api/live"
+  to = "/.netlify/functions/live"
+  status = 200
+
+[[redirects]]
+  from = "/api/pulse"
+  to = "/.netlify/functions/pulse"
+  status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cache-Control = "no-store"

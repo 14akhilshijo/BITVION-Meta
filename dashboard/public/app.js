@@ -180,6 +180,7 @@ let latestPulse = null;
 let view = "live";
 let filter = "all";
 let latestData = null;
+let usingPoll = false;
 
 function sourceTag(kind) {
   const form = /form/i.test(kind || "");
@@ -457,19 +458,70 @@ function bindSwitch(id, key) {
   });
 }
 
+function startPoll() {
+  if (usingPoll) return;
+  usingPoll = true;
+  const seen = new Map();
+  const load = async () => {
+    const response = await fetch("/api/live", { cache: "no-store" });
+    const data = await response.json();
+    render(data);
+    live.className = "live";
+    live.textContent = "Live";
+  };
+  const tick = async () => {
+    const response = await fetch("/api/pulse", { cache: "no-store" });
+    const data = await response.json();
+    if (data.error) return;
+    const primed = seen.size > 0;
+    const fresh = [];
+    for (const row of data.hours || []) {
+      const key = `${row.adsetId}|${row.hour}`;
+      const previous = seen.get(key) || 0;
+      if (primed && row.leads > previous) fresh.push({ ...row, delta: row.leads - previous });
+      seen.set(key, row.leads);
+    }
+    data.arrivals = fresh;
+    applyPulse(data);
+  };
+  load()
+    .then(() => tick())
+    .catch((error) => {
+    live.className = "live wait";
+    live.textContent = "Offline";
+    synced.textContent = error.message || "Meta did not answer";
+  });
+  setInterval(() => load().catch(() => {}), 90000);
+  setInterval(() => tick().catch(() => {}), 25000);
+}
+
 function connect() {
   bindSwitch("views", "view");
   bindSwitch("filters", "filter");
+  openStream();
+}
+
+function openStream() {
   const stream = new EventSource("/api/stream");
+  let opened = false;
   stream.addEventListener("snapshot", (event) => {
+    opened = true;
     render(JSON.parse(event.data));
   });
   stream.addEventListener("pulse", (event) => {
+    opened = true;
     applyPulse(JSON.parse(event.data));
   });
   stream.onerror = () => {
-    live.className = "live wait";
-    live.textContent = "Reconnecting";
+    stream.close();
+    if (!opened) startPoll();
+    else {
+      live.className = "live wait";
+      live.textContent = "Reconnecting";
+      setTimeout(() => {
+        if (!usingPoll) openStream();
+      }, 3000);
+    }
   };
 }
 

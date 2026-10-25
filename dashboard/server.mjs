@@ -125,6 +125,18 @@ const server = http.createServer(async (req, res) => {
     }
     return;
   }
+  if (url.pathname === "/api/pulse") {
+    try {
+      if (!cache?.data) await refresh(60);
+      const data = await pulse();
+      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      res.end(JSON.stringify(data || { error: "Pulse is not ready" }));
+    } catch (error) {
+      res.writeHead(502, { "Content-Type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ error: error.message || "Pulse failed" }));
+    }
+    return;
+  }
   if (url.pathname === "/api/stream") {
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
