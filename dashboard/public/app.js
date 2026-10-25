@@ -252,17 +252,67 @@ function tidy(name) {
   return String(name || "").replace(/\s+/g, " ").trim();
 }
 
+function lossReport(data) {
+  const plan = data.plan || {};
+  const bar = plan.cheapBar;
+  const cap = bar == null ? null : bar * 1.25;
+  const rows = (data.strategies || [])
+    .map((strategy) => {
+      const spend = strategy.spend || 0;
+      const above = strategy.cpr == null || cap == null || strategy.cpr > cap || strategy.activeAds === 0;
+      let lost = 0;
+      if (spend > 0 && above) {
+        lost = !strategy.leads || bar == null ? spend : Math.max(0, spend - strategy.leads * bar);
+      }
+      return { strategy, lost };
+    })
+    .filter((row) => row.lost >= 1)
+    .sort((a, b) => b.lost - a.lost);
+  return {
+    bar,
+    cap,
+    total: rows.reduce((sum, row) => sum + row.lost, 0),
+    rows,
+  };
+}
+
+function whyLost(strategy, bar) {
+  const side = strategy.business === "clinic" ? "Clinic" : "Institute";
+  const source = /form/i.test(strategy.kind || "") ? "form" : "WhatsApp";
+  if (strategy.status === "ACTIVE" && !strategy.activeAds) return `${side} ${source}. No live ad, so this spend cannot bring a lead.`;
+  if (!strategy.leads) return `${side} ${source}. The money went out and no lead came back.`;
+  return `${side} ${source} cost ${inr(strategy.cpr, 0)}. A cheap lead is ${inr(bar, 0)}.`;
+}
+
+function stepLost(strategy, action, winner) {
+  if (strategy.status !== "ACTIVE") return "Leave it off. Do not turn it back on at this cost.";
+  if (!strategy.activeAds || action === "Turn off" || action === "Rebuild") return "Turn this ad set off.";
+  if (winner) return `No extra budget. New money stays on ${tidy(winner.name)}.`;
+  return "No extra budget until a campaign holds the cheap price.";
+}
+
 function ideasHtml(data) {
   const plan = data.plan || {};
+  const loss = lossReport(data);
   const active = (data.strategies || []).filter((strategy) => strategy.status === "ACTIVE");
   const actionOf = (strategy) => plan.decisions?.[strategy.id]?.action || "Watch";
   const scales = active.filter((strategy) => actionOf(strategy) === "Scale");
   const keeps = active.filter((strategy) => actionOf(strategy) === "Keep");
   const holds = active.filter((strategy) => actionOf(strategy) === "Hold").sort((a, b) => b.spend - a.spend);
   const offs = active.filter((strategy) => actionOf(strategy) === "Turn off" || actionOf(strategy) === "Rebuild");
-  const cap = plan.cheapBar == null ? null : plan.cheapBar * 1.25;
+  const cap = loss.cap;
   const lead = scales[0];
   const priced = (strategy) => `${tidy(strategy.name)} · ${inr(strategy.cpr, 0)}`;
+  const leaks = loss.rows.map(({ strategy, lost }) => `
+    <article class="loss">
+      <div class="loss-amt">${inr(lost, 0)}</div>
+      <div>
+        <strong>${tidy(strategy.name)}</strong>
+        <div class="muted">${sourceTag(strategy.kind)} · ${strategy.business}</div>
+        <p class="fix bad">${whyLost(strategy, loss.bar)}</p>
+        <p class="fix ok">${stepLost(strategy, actionOf(strategy), lead)}</p>
+      </div>
+    </article>`).join("");
   const cards = [
     {
       tone: "ok",
@@ -285,7 +335,7 @@ function ideasHtml(data) {
       kicker: "03 · Above the cheap price",
       title: "No extra budget",
       line: holds.slice(0, 6).map(priced).join("<br>") || "None above the cheap price.",
-      note: `${inr(plan.waste, 0)} in 5 days. Leave these on, and do not add budget.`,
+      note: "Leave these on. The red amounts above are the extra paid on them.",
     },
     {
       tone: "wait",
@@ -312,6 +362,13 @@ function ideasHtml(data) {
         <blockquote>Building businesses. Creating growth.</blockquote>
         <p class="muted">Dr kukku · cheap bar ${inr(plan.cheapBar, 0)} · ${plan.cheapPerDay ?? "—"} leads/day at that price</p>
       </header>
+      <article class="lost-hero">
+        <span>Lost in 5 days</span>
+        <strong>${inr(loss.total, 0)}</strong>
+        <em>Extra paid above ${inr(loss.bar, 0)}, plus spend with no lead</em>
+      </article>
+      <div class="loss-list">${leaks || `<p class="empty">No lost amount in these 5 days.</p>`}</div>
+      <p class="steps-label">Improving steps</p>
       <div class="idea-grid">
         ${cards.map((card) => `
           <article class="idea ${card.tone}">
@@ -356,7 +413,7 @@ function render(data) {
     <button type="button" class="goal" data-open="path">
       <span>Cheap bar <b>${inr(bar, 0)}</b></span>
       <span class="ok">At that price <b>${plan.cheapPerDay ?? "—"}</b>/day</span>
-      <span class="bad">Above it <b>${inr(plan.waste, 0)}</b></span>
+      <span class="bad">Lost <b id="lost-total">${inr(lossReport(data).total, 0)}</b></span>
       <span class="link">Bitvion ideas</span>
     </button>`;
 

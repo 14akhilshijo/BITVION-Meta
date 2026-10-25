@@ -211,7 +211,45 @@ tr.ok td.name strong { color: var(--ok); }
 .goal b { font-size: 16px; }
 .goal .link { margin-left: auto; color: var(--blue); font-weight: 700; }
 
-.ideas { margin-top: 14px; }
+.lost-hero {
+  margin: 0 0 12px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 107, 107, 0.45);
+  background: rgba(80, 16, 16, 0.35);
+}
+.lost-hero span {
+  display: block;
+  color: var(--bad);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.lost-hero strong {
+  display: block;
+  color: var(--bad);
+  font-size: 40px;
+  line-height: 1.1;
+}
+.lost-hero em { color: var(--muted); font-style: normal; font-size: 13px; }
+.loss {
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 12px 4px;
+  border-bottom: 1px solid rgba(255, 107, 107, 0.18);
+}
+.loss-amt { color: var(--bad); font-size: 22px; font-weight: 800; }
+.steps-label {
+  margin: 16px 0 8px;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
 .ideas-head blockquote {
   margin: 4px 0 8px;
   padding: 0;
@@ -292,6 +330,8 @@ tr.ok td.name strong { color: var(--ok); }
   .warn { grid-template-columns: 72px minmax(0, 1fr) 36px; }
   .who { flex-wrap: wrap; }
   .who strong { white-space: normal; }
+  .loss { grid-template-columns: 88px minmax(0, 1fr); }
+  .lost-hero strong { font-size: 32px; }
   .goal .link { margin-left: 0; }
   th.day, td.day { display: none; }
   table { min-width: 0; }
