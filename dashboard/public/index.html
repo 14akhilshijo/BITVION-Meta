@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BITVION GROUPS · Dr kukku</title>
+  <link rel="stylesheet" href="/styles.css?v=14" />
+</head>
+<body>
+  <header class="brand">
+    <img class="logo" src="/logo.jpg" alt="Bitvion Groups" />
+    <div class="brand-copy">
+      <p class="mark">BITVION GROUPS</p>
+      <h1>Dr kukku live leads</h1>
+    </div>
+    <div class="sync">
+      <span id="live" class="live">Connecting</span>
+      <span id="synced">Waiting for Meta</span>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <div class="switch" id="views">
+      <button type="button" class="on" data-view="live">Live leads</button>
+      <button type="button" data-view="campaigns">Campaigns</button>
+      <button type="button" data-view="days">5 days</button>
+      <button type="button" data-view="path">Bitvion ideas</button>
+    </div>
+    <div class="switch" id="filters">
+      <button type="button" class="on" data-filter="all">All</button>
+      <button type="button" data-filter="clinic">Clinic</button>
+      <button type="button" data-filter="institute">Institute</button>
+      <button type="button" data-filter="whatsapp">WhatsApp</button>
+      <button type="button" data-filter="form">Form</button>
+    </div>
+  </div>
+
+  <main id="app">
+    <section class="loading">Pulling live leads…</section>
+  </main>
+
+  <script type="module" src="/app.js?v=14"></script>
+</body>
+</html>

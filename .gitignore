@@ -3,6 +3,10 @@
 .env.*
 .env.meta-ads
 .mcp.json
+.cursor/mcp.json
+
+# Live account dumps
+data/
 
 # OS
 .DS_Store
