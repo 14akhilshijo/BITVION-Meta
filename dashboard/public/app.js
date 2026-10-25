@@ -215,6 +215,76 @@ function rowMatches(row) {
   return true;
 }
 
+function startedAt(iso) {
+  if (!iso) return "On now";
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "numeric",
+    month: "short",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "Asia/Kolkata",
+  }).format(new Date(iso));
+}
+
+function todayFigures(strategy, data) {
+  const liveRow = (latestPulse?.today || []).find((row) => row.adsetId === strategy.id);
+  if (liveRow) return { leads: liveRow.leads || 0, spend: liveRow.spend || 0 };
+  const day = (strategy.days || []).find((item) => item.date === data?.window?.today);
+  return { leads: strategy.todayLeads || day?.leads || 0, spend: day?.spend || 0 };
+}
+
+function startedRows(data) {
+  const rows = (data.strategies || [])
+    .filter((strategy) => strategy.status === "ACTIVE" && matches(strategy))
+    .sort((a, b) => (b.activeAds > 0) - (a.activeAds > 0) || todayFigures(b, data).leads - todayFigures(a, data).leads);
+  return rows.map((strategy) => {
+    const today = todayFigures(strategy, data);
+    const on = strategy.activeAds > 0;
+    return `<article class="warn">
+      <span class="${on ? "ok" : "bad"}">${on ? "Live" : "No ad"}</span>
+      <div>
+        <strong>${strategy.name}</strong>
+        <p class="muted">${sourceTag(strategy.kind)} ${strategy.business} · started ${startedAt(strategy.created)} · ${inr(strategy.budget)}/day</p>
+      </div>
+      <div class="count">${today.leads}<div class="muted">today</div></div>
+    </article>`;
+  }).join("") || `<p class="empty">No campaign is switched on in this view.</p>`;
+}
+
+function comingRows(data) {
+  const rows = (data.strategies || [])
+    .filter((strategy) => matches(strategy))
+    .map((strategy) => ({ strategy, ...todayFigures(strategy, data) }))
+    .filter((row) => row.leads > 0)
+    .sort((a, b) => b.leads - a.leads || b.spend - a.spend);
+  return rows.map(({ strategy, leads, spend }) => {
+    const each = leads > 0 ? inr(spend / leads, 0) : "—";
+    return `<article class="warn">
+      <span class="ok">${leads}</span>
+      <div>
+        <strong>${strategy.name}</strong>
+        <p class="muted">${sourceTag(strategy.kind)} ${strategy.business} · ${each} each · ${inr(spend)} today</p>
+      </div>
+      <div class="count">${strategy.status === "ACTIVE" ? "On" : "Off"}<div class="muted">now</div></div>
+    </article>`;
+  }).join("") || `<p class="empty">No campaign has a lead today in this view.</p>`;
+}
+
+function liveBoards(data) {
+  const started = (data.strategies || []).filter((strategy) => strategy.status === "ACTIVE" && matches(strategy));
+  const coming = (data.strategies || []).filter((strategy) => matches(strategy) && todayFigures(strategy, data).leads > 0);
+  return `<section class="layout">
+    <article class="panel">
+      <h2>Live campaigns started <span class="muted" id="started-count">${started.length}</span></h2>
+      <div id="started-list" class="warn-list">${startedRows(data)}</div>
+    </article>
+    <article class="panel">
+      <h2>Bringing leads now <span class="muted" id="coming-count">${coming.length}</span></h2>
+      <div id="coming-list" class="warn-list">${comingRows(data)}</div>
+    </article>
+  </section>`;
+}
+
 function feedHtml(pulse) {
   const arrivals = pulse?.arrivals || [];
   const hours = (pulse?.hours || []).filter(rowMatches);
@@ -419,7 +489,7 @@ function render(data) {
 
   let body = "";
   if (view === "live") {
-    body = `<section class="layout">
+    body = `${liveBoards(data)}<section class="layout">
       <article class="panel">
         <h2>Leads now · time and source</h2>
         <div id="feed">${feedHtml(latestPulse)}</div>
@@ -491,7 +561,19 @@ function applyPulse(pulse) {
   latestPulse = pulse;
   const feed = document.querySelector("#feed");
   const today = document.querySelector("#today-count");
+  const started = document.querySelector("#started-list");
+  const coming = document.querySelector("#coming-list");
   if (feed) feed.innerHTML = feedHtml(pulse);
+  if (started && latestData) {
+    started.innerHTML = startedRows(latestData);
+    const startedCount = document.querySelector("#started-count");
+    const comingCount = document.querySelector("#coming-count");
+    const onNow = (latestData.strategies || []).filter((strategy) => strategy.status === "ACTIVE" && matches(strategy));
+    const bringing = (latestData.strategies || []).filter((strategy) => matches(strategy) && todayFigures(strategy, latestData).leads > 0);
+    if (startedCount) startedCount.textContent = onNow.length;
+    if (comingCount) comingCount.textContent = bringing.length;
+  }
+  if (coming && latestData) coming.innerHTML = comingRows(latestData);
   if (today && pulse.todayLeads != null) today.textContent = pulse.todayLeads;
   if (pulse.generatedAt) synced.textContent = `Leads ${clock(pulse.generatedAt)} IST`;
 }
