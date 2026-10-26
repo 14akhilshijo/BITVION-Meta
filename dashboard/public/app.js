@@ -697,45 +697,69 @@ function contentPage(data) {
   const today = istDay(0);
   const week = [0, 1, 2, 3, 4, 5, 6].map((offset) => istDay(offset));
   const selected = week.includes(contentDate) ? contentDate : today;
-  const pool = contentPool(data);
+  const clinic = betterCampaign(data, "clinic");
+  const institute = betterCampaign(data, "institute");
+  const clinicPiece = creativeFor(clinic.chosen, selected, "clinic");
+  const institutePiece = creativeFor(institute.chosen, selected, "institute");
   const cards = week.map((iso) => {
-    const piece = creativeFor(campaignFor(pool, iso), iso);
+    const angle = creativeFor(clinic.chosen || institute.chosen, iso, "clinic").angle;
     return `<button type="button" class="day ${iso === selected ? "on" : ""}" data-content-day="${iso}">
       <span class="muted">${iso === today ? "Today" : weekdayName(iso)}</span>
       <b>${dayLabel(iso)}</b>
-      <div class="muted">${esc(piece.campaign)}</div>
-      <div>${esc(piece.angle)}</div>
+      <div>Clinic · ${esc(clinic.chosen ? tidy(clinic.chosen.name) : "waiting")}</div>
+      <div>Institute · ${esc(institute.chosen ? tidy(institute.chosen.name) : "waiting")}</div>
+      <div class="muted">${esc(angle)}</div>
     </button>`;
   }).join("");
-  const focus = creativeFor(campaignFor(pool, selected), selected);
+  return `<section class="strategy-page">
+    <header class="summary-head">
+      <p class="mark">Content for each day</p>
+      <h2>${selected === today ? "Today" : weekdayName(selected)} · ${esc(clinicPiece.angle)}</h2>
+      <p class="muted">Clinic and institute stay on separate films. Each side uses the campaign that already reached more accounts at the lower cost. At midnight IST the shoot changes. The campaign changes when a live one beats it.</p>
+    </header>
+    <div class="week-board">${cards}</div>
+    <div class="side-boards">
+      ${sideBoard("clinic", clinic, clinicPiece)}
+      ${sideBoard("institute", institute, institutePiece)}
+    </div>
+  </section>`;
+}
+
+function sideBoard(business, pick, piece) {
   const node = (step, title, lines) => `
     <article class="flow-node">
       <p class="step-no">${step}</p>
       <h3>${esc(title)}</h3>
       <ol>${lines.map((line) => `<li>${esc(line)}</li>`).join("")}</ol>
     </article>`;
-  return `<section class="strategy-page">
-    <header class="summary-head">
-      <p class="mark">Content for each day</p>
-      <h2>${selected === today ? "Today" : weekdayName(selected)} · ${esc(focus.campaign)}</h2>
-      <p class="muted">Built from the campaigns that are delivering now. At midnight IST the board moves to the next live campaign and the next idea on its own.</p>
-    </header>
-    <div class="week-board">${cards}</div>
-    <section class="flow" aria-label="Reach path for the selected day">
-      ${node("1 · Story", focus.story.title, focus.story.lines)}
-      <div class="flow-arrow" aria-hidden="true">→</div>
-      ${node("2 · Reel", focus.reel.title, focus.reel.lines)}
-      <div class="flow-arrow" aria-hidden="true">→</div>
-      ${node("3 · Post", focus.post.title, focus.post.lines)}
-      <div class="flow-arrow" aria-hidden="true">→</div>
-      ${node("4 · Ad", focus.ad.title, focus.ad.lines)}
+  const label = business === "institute" ? "Institute" : "Clinic";
+  return `<article class="side-board ${business}">
+    <p class="mark">${label}</p>
+    <h2>${esc(piece.campaign)}</h2>
+    <p class="fix ok">${esc(whyBetter(pick, label))}</p>
+    <section class="flow" aria-label="${label} shoot">
+      ${node("Shoot the reel", piece.shoot.title, piece.shoot.lines)}
+      <div class="flow-arrow" aria-hidden="true">↓</div>
+      ${node("Story", piece.story.title, piece.story.lines)}
+      <div class="flow-arrow" aria-hidden="true">↓</div>
+      ${node("Post", piece.post.title, piece.post.lines)}
+      <div class="flow-arrow" aria-hidden="true">↓</div>
+      ${node("Ad", piece.ad.title, piece.ad.lines)}
     </section>
-    <article class="panel">
-      <h2>One film, four places</h2>
-      <p class="fix ok">${esc(focus.reach)}</p>
-      <p class="muted">${esc(focus.where)} · ${esc(focus.dest)}. Speak it in Malayalam and put the same words on screen. Skip trending songs. The desk does not publish anything.</p>
-    </article>
-  </section>`;
+  </article>`;
+}
+
+function whyBetter(pick, label) {
+  const lead = pick.chosen;
+  if (!lead) return `No ${label.toLowerCase()} campaign has a cost yet, so there is nothing to film from.`;
+  const reach = lead.reach ? `${Number(lead.reach).toLocaleString("en-IN")} accounts reached` : "reach still building";
+  const others = pick.runners.map((strategy) => {
+    const worn = (strategy.frequency || 0) >= 2.2 ? ", the same people are seeing it too often" : "";
+    return `${tidy(strategy.name)} at ${inr(strategy.cpr, 0)}${worn}`;
+  }).join("; ");
+  const against = others ? `Left aside: ${others}.` : "It is the only campaign with a cost on this side.";
+  const state = pick.live ? "It is delivering now." : "Use it until a live campaign beats this cost.";
+  return `${tidy(lead.name)} is the one to shoot. ${inr(lead.cpr, 0)} a lead, ${lead.leads || 0} leads, ${reach}. ${against} ${state}`;
 }
 
 function istDay(offset = 0) {
@@ -754,30 +778,36 @@ function weekdayName(iso) {
   return new Intl.DateTimeFormat("en-IN", { weekday: "long", timeZone: "Asia/Kolkata" }).format(new Date(`${iso}T12:00:00+05:30`));
 }
 
-function contentPool(data) {
-  const liveSets = (data.strategies || []).filter((strategy) => strategy.status === "ACTIVE" && strategy.activeAds > 0 && matches(strategy));
-  return [...liveSets].sort((a, b) => (a.cpr ?? 9999) - (b.cpr ?? 9999) || (b.leads || 0) - (a.leads || 0));
-}
-
-function campaignFor(pool, iso) {
-  if (!pool.length) return null;
-  const [year, month, day] = iso.split("-").map(Number);
-  const index = Math.floor(Date.UTC(year, month - 1, day) / 86400000);
-  return pool[index % pool.length];
+function betterCampaign(data, business) {
+  const rows = (data.strategies || []).filter((strategy) => strategy.business === business);
+  const live = rows.filter((strategy) => strategy.status === "ACTIVE" && strategy.activeAds > 0);
+  const withCost = (list) => list.filter((strategy) => strategy.cpr != null && (strategy.leads || 0) > 0);
+  const pool = withCost(live).length ? withCost(live) : withCost(rows);
+  const tired = (strategy) => (strategy.frequency || 0) >= 2.2 ? 1 : 0;
+  const ranked = [...pool].sort((a, b) => tired(a) - tired(b) || a.cpr - b.cpr || (b.reach || 0) - (a.reach || 0) || (b.leads || 0) - (a.leads || 0));
+  const chosen = ranked[0] || null;
+  return {
+    chosen,
+    runners: ranked.slice(1, 3),
+    live: Boolean(chosen && chosen.status === "ACTIVE" && chosen.activeAds > 0),
+  };
 }
 
 function esc(value) {
   return String(value ?? "").replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[char]));
 }
 
-function creativeFor(strategy, iso) {
-  const name = tidy(strategy?.name) || "the next live campaign";
+function creativeFor(strategy, iso, business) {
+  const institute = business === "institute" || strategy?.business === "institute";
+  const name = tidy(strategy?.name) || (institute ? "the next institute campaign" : "the next clinic campaign");
   const form = /form/i.test(strategy?.kind || "");
-  const institute = strategy?.business === "institute";
   const town = strategy?.places?.[0]?.name || String(strategy?.geo || "").split(",")[0] || "the towns already running";
   const dest = form ? "the instant form" : "WhatsApp";
   const who = institute ? "someone who wants the skill" : "a woman nearby who has been thinking about it";
-  const place = institute ? "the classroom" : "the chair";
+  const place = institute ? "the classroom table" : "the treatment chair";
+  const rig = institute
+    ? "Stand in the classroom doorway. Keep the table and one tool in frame. A student's hands can do the work."
+    : "Stand beside the treatment chair. Keep the phone out of the mirror. Light the face from the side, not from the ceiling.";
   const weekday = new Date(`${iso}T12:00:00+05:30`).getUTCDay();
   const angles = [
     {
@@ -789,44 +819,44 @@ function creativeFor(strategy, iso) {
     },
     {
       angle: "The question",
-      open: `First line, spoken: “Still deciding about ${name}?”`,
-      middle: `Answer with one real step you do in ${place}. Keep it under four seconds.`,
-      close: `Point to ${dest}. The question stops the scroll. The answer is the next message.`,
+      open: `Look into the lens and say “Still deciding about ${name}?”`,
+      middle: `Answer with one real step at ${place}. Keep it under four seconds.`,
+      close: `Point toward ${dest}. The question stops the scroll.`,
       sticker: "Question sticker: “What do you want to ask before you come in?”",
     },
     {
       angle: "The hands",
-      open: "Start on the hands. No intro card.",
+      open: "Start on the hands. No intro card and no logo.",
       middle: `Name ${name} while the hands keep moving. One tool, one motion.`,
-      close: `A local line: “This is ${town}.” Then ${dest}.`,
+      close: `Say “This is ${town}.” Then name ${dest}.`,
       sticker: "Quiz sticker with two honest choices about the visit.",
     },
     {
       angle: "One sentence",
       open: `A person in frame says one sentence about why they asked about ${name}.`,
-      middle: "Do not invent a review. Use their words only with permission. Otherwise use your own.",
+      middle: "Use their words only with permission. Otherwise speak your own sentence.",
       close: `${who.charAt(0).toUpperCase()}${who.slice(1)} should see that the next step is ${dest}.`,
       sticker: "Poll: “Want the short version, or the full visit?”",
     },
     {
       angle: "The next step",
       open: `Say where the message goes: ${dest}.`,
-      middle: `Show the page they will reach, then cut back to ${place}.`,
-      close: "Repeat the campaign name once. Leave the last second with the words on screen.",
+      middle: `Show the phone screen they will reach, then cut back to ${place}.`,
+      close: `Repeat ${name} once. Hold the last second on the words.`,
       sticker: form ? "Link sticker straight to the form." : "Link sticker to the WhatsApp chat.",
     },
     {
       angle: "The myth",
-      open: `“People think ${name} takes the whole day.”`,
+      open: `Say “People think ${name} takes the whole day.”`,
       middle: "Show the real length of the visit or the class. Make no guarantee.",
-      close: `Invite the question on ${dest} instead of arguing in the caption.`,
+      close: `Invite the question on ${dest}.`,
       sticker: "Emoji slider from unsure to ready.",
     },
     {
       angle: "Behind the door",
-      open: `Open the door of the ${institute ? "institute" : "clinic"} in ${town}.`,
+      open: `Open the door in ${town} and walk one step in.`,
       middle: "One room, one person getting ready, one line about who today is for.",
-      close: `Invite them to send the first message on ${dest}.`,
+      close: `Invite the first message on ${dest}.`,
       sticker: "Question box: “Ask what you would ask at the door.”",
     },
   ];
@@ -836,40 +866,40 @@ function creativeFor(strategy, iso) {
     angle: angle.angle,
     where: `${institute ? "Institute" : "Clinic"} · ${town}`,
     dest: form ? "Instant form" : "WhatsApp",
-    reach: "The story stops the thumb, the reel earns the watch, the post stays on the page, and the ad spends on that same file. One film reaches further than four unrelated pieces.",
+    shoot: {
+      title: "Phone upright · 9:16 · sound on",
+      lines: [
+        rig,
+        `Shot 1, 0–1 second. ${angle.open} Hold the phone still. The first word must land inside that second.`,
+        `Shot 2, 1–5 seconds. ${angle.middle} Move the phone only to follow the hands.`,
+        `Shot 3, 5–12 seconds. ${angle.close} End on the face. Stop before 12 seconds.`,
+        "One voice in Malayalam, with the same words burned in the centre, clear of the Reels buttons. No song. If the first word is late, shoot that opening again.",
+      ],
+    },
     story: {
       title: `${angle.angle} · 3 story frames`,
       lines: [
-        `Frame 1. A still of ${place} with six words: “${name} today.” Add a ${angle.sticker}`,
-        "Frame 2. Five seconds of the reel, cropped to the face and the hands. No link yet.",
-        `Frame 3. The same last line as the reel, then the sticker that opens ${dest}.`,
-      ],
-    },
-    reel: {
-      title: "9:16 reel · sound on · 8 to 12 seconds",
-      lines: [
-        angle.open,
-        angle.middle,
-        angle.close,
-        "Burn the words in the centre, clear of the Reels buttons. Face or hands in the first frame.",
+        `Frame 1. A still from shot 1 with six words: “${name} today.” Add a ${angle.sticker}`,
+        "Frame 2. The middle of shot 2, five seconds, face and hands. No link yet.",
+        `Frame 3. The last line of shot 3, then the sticker that opens ${dest}.`,
       ],
     },
     post: {
-      title: "Feed post from the same film",
+      title: "Four frames from the same shots",
       lines: [
-        `Frame 1. The spoken first line as large text, with ${name} under it.`,
-        `Frame 2. The hands or the class in ${town}.`,
+        `Frame 1. Shot 1 as a still, with the spoken line in large text and ${name} under it.`,
+        `Frame 2. Shot 2, the hands at ${place} in ${town}.`,
         `Frame 3. Who it is for: ${who}.`,
-        `Frame 4. The next step only: open ${dest}. The first caption line is the hook, not the page name.`,
+        `Frame 4. Shot 3’s last line. The caption starts with the hook, then ${dest}.`,
       ],
     },
     ad: {
-      title: form ? "Reel ad into the form" : "Reel ad into WhatsApp",
+      title: form ? "Same reel into the form" : "Same reel into WhatsApp",
       lines: [
-        "Publish the reel on the page first, then use that same reel as the ad.",
+        "Post the reel on this page first, then run that same file as the ad.",
         "9:16, sound on, Advantage+ placements. Reels and Stories carry the reach.",
-        `Send the click to ${dest}. Leave the location, radius, and audience on the live campaign.`,
-        `Open on this idea: ${angle.angle}. That is the line people stop for.`,
+        `Send the click to ${dest}. Leave this campaign’s location, radius, and audience as they are.`,
+        `This day’s film is ${angle.angle}. Shoot a new one after midnight, still for ${name}, until another campaign beats its cost and reach.`,
       ],
     },
   };
