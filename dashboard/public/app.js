@@ -231,9 +231,31 @@ function startedAt(iso) {
   }).format(new Date(iso));
 }
 
+function sideToday(data, business) {
+  return (data?.strategies || [])
+    .filter((strategy) => strategy.business === business)
+    .reduce((sum, strategy) => sum + todayFigures(strategy, data).leads, 0);
+}
+
+function exactDaysHtml(data) {
+  const today = data.window?.today;
+  return `<section class="days exact-days">${(data.byDay || []).map((day) => {
+    const isToday = day.date === today;
+    const clinic = isToday ? sideToday(data, "clinic") : day.clinicLeads;
+    const institute = isToday ? sideToday(data, "institute") : day.instituteLeads;
+    return `<article class="day">
+      <span class="muted">${dayLabel(day.date)}${isToday ? " · today" : ""}</span>
+      <b ${isToday ? `data-day-total="today"` : ""}>${clinic + institute}</b>
+      <div class="side">Clinic <strong ${isToday ? `data-side-today="clinic"` : ""}>${clinic}</strong></div>
+      <div class="side">Institute <strong ${isToday ? `data-side-today="institute"` : ""}>${institute}</strong></div>
+    </article>`;
+  }).join("")}</section>`;
+}
 function todayFigures(strategy, data) {
-  const liveRow = (latestPulse?.today || []).find((row) => row.adsetId === strategy.id);
-  if (liveRow) return { leads: liveRow.leads || 0, spend: liveRow.spend || 0 };
+  if (latestPulse?.today) {
+    const liveRow = latestPulse.today.find((row) => row.adsetId === strategy.id);
+    return { leads: liveRow?.leads || 0, spend: liveRow?.spend || 0 };
+  }
   const day = (strategy.days || []).find((item) => item.date === data?.window?.today);
   return { leads: strategy.todayLeads || day?.leads || 0, spend: day?.spend || 0 };
 }
@@ -1010,8 +1032,8 @@ function render(data) {
   const stats = `
     <section class="vision">
       <article class="stat target"><span>Each day</span><strong>40</strong><em>leads today</em></article>
-      <article class="stat"><span>Clinic</span><strong>${daily.clinic.aim}</strong><em>of today’s 40 · ${daily.clinic.now} now</em></article>
-      <article class="stat"><span>Institute</span><strong>${daily.institute.aim}</strong><em>of today’s 40 · ${daily.institute.now} now</em></article>
+      <article class="stat"><span>Clinic today</span><strong data-side-today="clinic">${sideToday(data, "clinic")}</strong><em>leads seen</em></article>
+      <article class="stat"><span>Institute today</span><strong data-side-today="institute">${sideToday(data, "institute")}</strong><em>leads seen</em></article>
       <article class="stat"><span>Still short today</span><strong id="goal-gap">${daily.gap}</strong><em>leads to reach 40</em></article>
     </section>
     <section class="stats">
@@ -1026,7 +1048,8 @@ function render(data) {
       <span class="ok">At that price <b>${plan.cheapPerDay ?? "—"}</b>/day</span>
       <span class="bad">Lost <b id="lost-total">${inr(lossReport(data).total, 0)}</b></span>
       <span class="link">Bitvion ideas</span>
-    </button>`;
+    </button>
+    ${exactDaysHtml(data)}`;
 
   let body = "";
   if (view === "live") {
@@ -1130,6 +1153,11 @@ function applyPulse(pulse) {
   const summaryToday = document.querySelector("#summary-today");
   if (summaryToday && latestData) summaryToday.textContent = allLeadTotal(latestData);
   if (today.length && pulse.todayLeads != null) today.forEach((node) => { node.textContent = pulse.todayLeads; });
+  document.querySelectorAll("[data-side-today]").forEach((node) => {
+    if (latestData) node.textContent = sideToday(latestData, node.dataset.sideToday);
+  });
+  const dayTotal = document.querySelector("[data-day-total='today']");
+  if (dayTotal && latestData) dayTotal.textContent = sideToday(latestData, "clinic") + sideToday(latestData, "institute");
   if (pulse.generatedAt) synced.textContent = `Leads ${clock(pulse.generatedAt)} IST`;
 }
 

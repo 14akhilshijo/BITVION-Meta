@@ -211,6 +211,9 @@ main { padding: 0 28px 40px; }
 .bad { color: var(--bad); }
 
 .days { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+.exact-days { margin-bottom: 12px; }
+.exact-days .side { color: var(--muted); font-size: 13px; }
+.exact-days .side strong { color: var(--ink); font-size: 15px; }
 .day {
   border: 1px solid var(--line);
   border-radius: 14px;
