@@ -58,28 +58,39 @@ function round(value, digits = 2) {
 }
 
 function geoInfo(targeting) {
-  const cities = (targeting?.geo_locations?.cities || []).map((city) => city.name || "");
+  const cities = targeting?.geo_locations?.cities || [];
+  const cityNames = cities.map((city) => city.name || "").filter(Boolean);
   const regions = (targeting?.geo_locations?.regions || []).map((region) => region.name || "");
-  const names = new Set(cities);
+  const names = new Set(cityNames);
   let key = "other";
-  let label = cities.slice(0, 3).join(", ") || regions.join(", ") || "Not set";
-  if (names.has("Perumbavoor") && names.has("Koovappady") && cities.length <= 6) {
+  let label = cityNames.slice(0, 3).join(", ") || regions.join(", ") || "Not set";
+  if (names.has("Perumbavoor") && names.has("Koovappady") && cityNames.length <= 6) {
     key = "perumbavoor";
     label = "Perumbavoor, Koovappady, Kuruppampady";
   } else if (names.has("Bangalore") || names.has("Chennai") || names.has("Pune")) {
     key = "kerala-plus-metros";
     label = "Kerala plus other metros";
-  } else if (cities.length > 10) {
+  } else if (cityNames.length > 10) {
     key = "kerala-towns";
-    label = `Kerala · ${cities.length} towns`;
+    label = `Kerala · ${cityNames.length} towns`;
   } else if (regions.includes("Kerala")) {
     key = "kerala";
     label = "Kerala";
   }
+  const genders = targeting?.genders || [];
+  const gender = genders.includes(1) && !genders.includes(2) ? "Men" : genders.includes(2) && !genders.includes(1) ? "Women" : "All";
+  const radiusCity = cities.find((city) => city.radius);
+  const radius = radiusCity?.radius ?? null;
   return {
     key,
     label,
     advantage: (targeting?.targeting_automation?.advantage_audience ?? 0) === 1,
+    places: cities.slice(0, 40).map((city) => ({ name: city.name || "", radius: city.radius || null })).filter((city) => city.name),
+    radius,
+    radiusUnit: radiusCity?.distance_unit || "kilometer",
+    ageMin: targeting?.age_min ?? null,
+    ageMax: targeting?.age_max ?? null,
+    gender,
   };
 }
 
@@ -232,6 +243,12 @@ export async function buildSnapshot(env, targetLeads = 60) {
       learning: learningOf(adset, 0, ageDays),
       geoKey: geo.key,
       geo: geo.label,
+      places: geo.places,
+      radius: geo.radius,
+      radiusUnit: geo.radiusUnit,
+      ageMin: geo.ageMin,
+      ageMax: geo.ageMax,
+      gender: geo.gender,
       advantage: geo.advantage,
       activeAds: activeAds.get(adset.id) || 0,
       days: Object.fromEntries(days.map((date) => [date, emptyDay(date)])),
@@ -634,61 +651,61 @@ function buildPlan(running, days, today, target) {
       ? `One new ad set only: copy ${scales[0]?.name || "the cheapest winner"} into a new 9:16 video, or one new town, at ₹150. Keep it only if the cost stays under ${money(cheapBar * 1.25)}.`
       : "Wait for 5 leads on one campaign before opening a new one.";
   const premiumLeads = 40;
-  const premiumBudget = 1700;
-  const unitCap = premiumBudget / premiumLeads;
-  const weakRank = (strategy) =>
-    ["Bottom 10%", "Bottom 20%"].includes(strategy.engagement) ||
-    ["Bottom 10%", "Bottom 20%"].includes(strategy.conversion);
+  const cheapCap = cheapBar == null ? null : cheapBar * 1.25;
   const premiumFit = (strategy) =>
     strategy.activeAds > 0 &&
     strategy.cpr != null &&
-    strategy.cpr <= unitCap &&
     strategy.fullDayLeads >= 5 &&
-    !weakRank(strategy) &&
+    (cheapCap == null || strategy.cpr <= cheapCap) &&
     (strategy.frequency == null || strategy.frequency < 2.2);
   const premiumSets = active.filter(premiumFit).sort((a, b) => a.cpr - b.cpr || b.leads - a.leads);
   const hero = premiumSets[0] || null;
-  const stopAt = Math.min(unitCap, cheapBar == null ? unitCap : cheapBar * 1.25);
+  const stopAt = cheapCap == null ? null : cheapCap;
   const premiumPerDay = round(premiumSets.reduce((sum, strategy) => sum + strategy.leads, 0) / 5, 1);
   const edits = [];
   if (hero) {
     edits.push({
       kind: "current",
       tone: "ok",
-      title: "One budget test on the cheapest premium campaign",
+      title: "One budget test on the cheapest campaign",
       line: `${hero.name} · ${money(hero.cpr)} · ${money(hero.budget)} → ${money(hero.budget * 1.2)}`,
-      note: `Stop if the cost goes above ${money(stopAt)}. Leave targeting and placements unchanged.`,
+      note: `Stop if the cost goes above ${money(stopAt)}. Leave the location, radius, and audience unchanged.`,
     });
   } else {
     edits.push({
       kind: "current",
       tone: "wait",
-      title: "No budget change until a campaign holds under ₹42.50",
-      line: "No live campaign is both under that price and proven.",
-      note: "Wait for 5 leads under ₹42.50 before the first budget edit.",
+      title: "No budget change until a campaign holds the lowest cost",
+      line: "No live campaign has 5 leads at the lowest cost yet.",
+      note: "Read the next edit from the campaigns that are delivering now.",
     });
   }
   if (premiumSets.length > 1) {
     edits.push({
       kind: "current",
       tone: "ok",
-      title: "Leave the other premium campaigns unchanged",
+      title: "Leave the other low-cost campaigns unchanged",
       line: premiumSets.slice(1).map((strategy) => `${strategy.name} · ${money(strategy.cpr)}`).join(" · "),
-      note: "They already fit ₹1,700. A second raise makes them bid against the cheapest one.",
+      note: "They already bring leads at a low cost. A second raise makes them bid against the cheapest one.",
     });
   }
-  const aboveCap = active.filter((strategy) => strategy.activeAds > 0 && strategy.cpr != null && strategy.cpr > unitCap);
+  const aboveCap = active.filter((strategy) => strategy.activeAds > 0 && cheapCap != null && strategy.cpr != null && strategy.cpr > cheapCap);
   if (aboveCap.length) {
     edits.push({
       kind: "current",
       tone: "bad",
-      title: "No extra budget above ₹42.50",
+      title: "No extra budget above the lowest cost",
       line: aboveCap.slice(0, 6).map((strategy) => `${strategy.name} · ${money(strategy.cpr)}`).join(" · "),
-      note: "Leave them on. A higher average cost is not a reason to turn them off. New money stays inside ₹1,700.",
+      note: "Leave them on. A higher average cost is not a reason to turn them off.",
     });
   }
   const weakFit = active.filter(
-    (strategy) => strategy.activeAds > 0 && strategy.cpr != null && strategy.cpr <= unitCap && weakRank(strategy) && strategy.leads >= 5
+    (strategy) =>
+      strategy.activeAds > 0 &&
+      strategy.cpr != null &&
+      (cheapCap == null || strategy.cpr <= cheapCap) &&
+      (strategy.engagement === "Bottom 10%" || strategy.engagement === "Bottom 20%" || strategy.conversion === "Bottom 10%" || strategy.conversion === "Bottom 20%") &&
+      strategy.leads >= 5
   );
   if (weakFit.length) {
     edits.push({
@@ -716,7 +733,7 @@ function buildPlan(running, days, today, target) {
       tone: "ok",
       title: "Send form quality back before the budget step",
       line: formFit.name,
-      note: "Connect the CRM through the Conversions API so the form can optimise for a premium lead, not only a submitted form.",
+      note: "Connect the CRM through the Conversions API so the form can optimise for the leads that already stay cheap.",
     });
   }
   edits.push({
@@ -724,14 +741,12 @@ function buildPlan(running, days, today, target) {
     tone: "wait",
     title: hero ? "One new campaign from the winner" : "Wait to open a new campaign",
     line: hero
-      ? `Copy ${hero.name}. One 9:16 video with audio, or one town: Angamaly, Muvattupuzha, or Kochi. Budget ₹150.`
-      : "Open nothing until one campaign has 5 leads under ₹42.50.",
+      ? `Copy ${hero.name}. Same location radius and audience. One 9:16 video with audio, or one new town that is not already running.`
+      : "Open nothing until one live campaign has 5 leads at the lowest cost.",
     note: `Keep automatic placements. Keep the new ad set only while the cost stays under ${money(stopAt)}. One test at a time.`,
   });
   const premium = {
     leads: premiumLeads,
-    budget: premiumBudget,
-    unit: round(unitCap, 2),
     nowPerDay: premiumPerDay,
     gap: round(Math.max(0, premiumLeads - premiumPerDay), 1),
     edits,
@@ -754,7 +769,7 @@ function buildPlan(running, days, today, target) {
 
   return {
     target,
-    aim: "40 premium leads inside ₹1700 a day",
+    aim: "40 leads a day at the lowest cost",
     premium,
     cheapBar: cheapBar == null ? null : round(cheapBar, 0),
     cheapPerDay,

@@ -307,6 +307,27 @@ tr.ok td.name strong { color: var(--ok); }
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
+.choice-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+.choice-row button {
+  border: 1px solid var(--line);
+  background: #0c1824;
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 8px 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.choice-row button.on { border-color: #7ec8ff; background: #123049; }
+.choice-row .rec {
+  display: inline-block;
+  margin-left: 8px;
+  color: #041018;
+  background: #7dffb0;
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 11px;
+}
+.pick-label { margin: 8px 0 6px; color: var(--muted); font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
 .strategy-col em { color: var(--muted); font-style: normal; font-size: 12px; }
 .strategy-col.on {
   border-color: rgba(125, 215, 255, 0.7);

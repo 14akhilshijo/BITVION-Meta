@@ -182,6 +182,9 @@ let filter = "all";
 let latestData = null;
 let usingPoll = false;
 let buildChoice = "raise";
+let buildPlace = "";
+let buildRadius = "same";
+let buildAudience = "same";
 
 function sourceTag(kind) {
   const form = /form/i.test(kind || "");
@@ -245,7 +248,7 @@ function startedRows(data) {
       <span class="${on ? "ok" : "bad"}">${on ? "Live" : "No ad"}</span>
       <div>
         <strong>${strategy.name}</strong>
-        <p class="muted">${sourceTag(strategy.kind)} ${strategy.business} · started ${startedAt(strategy.created)} · ${inr(strategy.budget)}/day</p>
+        <p class="muted">${sourceTag(strategy.kind)} ${strategy.business} · started ${startedAt(strategy.created)} · ${strategy.geo || "Location not set"}</p>
       </div>
       <div class="count">${today.leads}<div class="muted">today</div></div>
     </article>`;
@@ -271,39 +274,36 @@ function comingRows(data) {
   }).join("") || `<p class="empty">No campaign has a lead today in this view.</p>`;
 }
 
-function fitsPremium(strategy, unit) {
-  if (!unit || strategy.activeAds === 0 || strategy.cpr == null || strategy.cpr > unit) return false;
-  const weak = ["Bottom 10%", "Bottom 20%"];
-  if (weak.includes(strategy.engagement) || weak.includes(strategy.conversion)) return false;
+function cheapGate(data) {
+  const bar = data.plan?.cheapBar;
+  return bar == null ? null : bar * 1.25;
+}
+
+function fitsCheap(strategy, data) {
+  const cap = cheapGate(data);
+  if (strategy.activeAds === 0 || strategy.cpr == null) return false;
+  if (cap != null && strategy.cpr > cap) return false;
   if (strategy.frequency != null && strategy.frequency >= 2.2) return false;
   return (strategy.fullDayLeads || 0) >= 5;
 }
 
 function allLeadRows(data) {
-  const unit = data.plan?.premium?.unit ?? 42.5;
   const rows = (data.strategies || [])
     .filter(matches)
     .map((strategy) => ({ strategy, ...todayFigures(strategy, data) }))
     .sort((a, b) => b.leads - a.leads || (b.strategy.leads || 0) - (a.strategy.leads || 0));
   return rows.map(({ strategy, leads, spend }) => {
-    const fit = fitsPremium(strategy, unit);
+    const fit = fitsCheap(strategy, data);
     const cost = strategy.cpr == null ? "no 5-day cost" : `${inr(strategy.cpr, 0)} over 5 days`;
     return `<article class="warn">
       <span class="${leads ? "ok" : "muted"}">${leads}</span>
       <div>
         <strong>${tidy(strategy.name)}</strong>
-        <p class="muted">${sourceTag(strategy.kind)} ${strategy.business} · ${strategy.leads || 0} in 5 days · ${cost}${fit ? " · fits ₹1,700" : ""}</p>
+        <p class="muted">${sourceTag(strategy.kind)} ${strategy.business} · ${strategy.leads || 0} in 5 days · ${cost}${fit ? " · lowest cost" : ""}</p>
       </div>
       <div class="count">${inr(spend, 0)}<div class="muted">today</div></div>
     </article>`;
   }).join("") || `<p class="empty">No campaigns in this view.</p>`;
-}
-
-function premiumTodayCount(data) {
-  const unit = data.plan?.premium?.unit ?? 42.5;
-  return (data.strategies || [])
-    .filter((strategy) => matches(strategy) && fitsPremium(strategy, unit))
-    .reduce((sum, strategy) => sum + todayFigures(strategy, data).leads, 0);
 }
 
 function allLeadTotal(data) {
@@ -419,9 +419,9 @@ function premiumBlock(plan) {
   const fresh = (premium.edits || []).filter((item) => item.kind === "new");
   return `
     <article class="lost-hero vision-hero">
-      <span>40 premium leads inside one day</span>
-      <strong>${inr(premium.budget, 0)}</strong>
-      <em>${premium.nowPerDay} a day from campaigns under ${inr(premium.unit, 2)} · ${premium.gap} still to build</em>
+      <span>40 leads each day</span>
+      <strong>${premium.nowPerDay ?? "—"}</strong>
+      <em>a day from the lowest-cost campaigns · ${premium.gap ?? "—"} still to reach 40</em>
     </article>
     <p class="steps-label">Current campaign changes</p>
     <div class="idea-grid">${current.map(card).join("")}</div>
@@ -498,7 +498,7 @@ function ideasHtml(data) {
       <header class="ideas-head">
         <p class="mark">Bitvion strategical ideas</p>
         <blockquote>Building businesses. Creating growth.</blockquote>
-        <p class="muted">Dr kukku · 40 premium leads inside ₹1,700 a day · ${inr(plan.premium?.unit, 2)} each</p>
+        <p class="muted">Dr kukku · 40 leads a day · lowest cost first</p>
       </header>
       ${premiumBlock(plan)}
       <article class="lost-hero">
@@ -533,75 +533,112 @@ function dailyLeads(strategy) {
   return (strategy.leads || 0) / counted;
 }
 
+const NEXT_TOWNS = ["Angamaly", "Muvattupuzha", "Kochi", "Aluva", "Kothamangalam"];
+
+function cheapHero(data) {
+  const listed = (data.strategies || []).filter((strategy) => strategy.status === "ACTIVE" && matches(strategy));
+  const proven = listed.filter((strategy) => fitsCheap(strategy, data));
+  const pool = proven.length ? proven : listed.filter((strategy) => strategy.activeAds > 0 && strategy.cpr != null);
+  return [...pool].sort((a, b) => a.cpr - b.cpr || b.leads - a.leads)[0] || null;
+}
+
+function setupFrom(hero) {
+  const running = (hero?.places || []).map((place) => place.name).filter(Boolean);
+  const suggested = NEXT_TOWNS.find((name) => !running.includes(name)) || NEXT_TOWNS[0];
+  const locations = [...new Set([...running, ...NEXT_TOWNS])];
+  if (!locations.includes(buildPlace)) buildPlace = suggested;
+  return { running, suggested, locations, hero };
+}
+
+function winnerAudience(hero) {
+  const age = hero?.ageMin && hero?.ageMax ? `${hero.ageMin}–${hero.ageMax}` : "18–65";
+  return `${hero?.gender || "Women"} ${age}, ${hero?.advantage ? "Advantage+ on" : "Advantage+ off"}`;
+}
+
+function audienceLine(hero) {
+  const age = hero?.ageMin && hero?.ageMax ? `${hero.ageMin}–${hero.ageMax}` : "18–65";
+  const who = `${hero?.gender || "Women"} ${age}`;
+  const advantage = hero?.advantage ? "Advantage+ on" : "Advantage+ off";
+  if (buildAudience === "women") return "Women 18–65, Advantage+ on";
+  if (buildAudience === "open") return "All 18–65, Advantage+ on";
+  return `${who}, ${advantage}`;
+}
+
+function radiusLine(hero) {
+  if (buildRadius === "10" || buildRadius === "17" || buildRadius === "25") return `${buildRadius} km`;
+  return hero?.radius ? `${hero.radius} km, the same as the winner` : "the same radius as the winner";
+}
+
 function strategyOptions(data) {
-  const unit = data.plan?.premium?.unit ?? 42.5;
-  const listed = (data.strategies || []).filter(matches);
-  const premium = listed.filter((strategy) => fitsPremium(strategy, unit));
-  const hero = [...premium].sort((a, b) => a.cpr - b.cpr || b.leads - a.leads)[0] || null;
-  const base = premium.reduce((sum, strategy) => sum + dailyLeads(strategy), 0);
-  const heroDaily = hero ? dailyLeads(hero) : 0;
-  const freshDaily = hero && hero.cpr > 0 ? 150 / hero.cpr : 0;
+  const hero = cheapHero(data);
+  const cap = cheapGate(data);
+  const stop = cap == null ? "the lowest proven cost" : inr(cap, 0);
+  const listed = (data.strategies || []).filter((strategy) => strategy.status === "ACTIVE" && matches(strategy) && fitsCheap(strategy, data));
+  const base = listed.reduce((sum, strategy) => sum + dailyLeads(strategy), 0);
+  const heroDaily = hero && fitsCheap(hero, data) ? dailyLeads(hero) : 0;
+  const proven = Boolean(hero) && fitsCheap(hero, data);
+  const setup = setupFrom(hero);
+  const already = setup.running.includes(buildPlace);
+  const startBudget = hero?.budget || 150;
+  const freshDaily = hero && hero.cpr > 0 && !already ? startBudget / hero.cpr : 0;
   const ramp = [0.3, 0.5, 0.7, 0.9, 1];
   const start = data.window?.today;
   const days = [1, 2, 3, 4, 5].map((step) => shiftDate(start, step));
+  const where = `Location ${buildPlace}. Radius ${radiusLine(hero)}. Audience ${audienceLine(hero)}.`;
   const pack = (id, title, kicker, steps, extra) => {
     const series = days.map((date, index) => {
       const added = typeof extra === "function" ? extra(index) : extra;
       return { date, leads: Math.round((base + added) * 10) / 10 };
     });
-    const total = Math.round(series.reduce((sum, day) => sum + day.leads, 0) * 10) / 10;
-    return { id, title, kicker, steps, series, total, perDay: Math.round((total / 5) * 10) / 10, ready: id === "hold" || id === "empty" || Boolean(hero) };
+    const perDay = series[series.length - 1]?.leads ?? 0;
+    return { id, title, kicker, steps, series, perDay, ready: Boolean(hero) || id === "empty" };
   };
+  const newSteps = hero
+    ? already
+      ? `${buildPlace} is already inside ${tidy(hero.name)}. Choose a recommended town that is not running. ${where}`
+      : `In Ads Manager, duplicate ${tidy(hero.name)} into one new ad set. ${where} Start that ad set at ${inr(startBudget)} a day, the same as the winner. Keep automatic placements. Keep it only while the cost stays under ${stop}.`
+    : "Copy a winner only after one live campaign has 5 leads at the lowest cost.";
   return [
-    pack("hold", "Keep the premium campaigns", "No edit", "Leave budgets, targeting, and placements as they are. This is the pace already inside ₹42.50.", 0),
+    pack("hold", "Keep the lowest-cost campaigns", "No edit", "Leave budgets, location, radius, and audience as they are. This is the pace the running campaigns already hold.", 0),
     pack(
       "raise",
-      hero ? `Raise only ${tidy(hero.name)}` : "Wait for a winner under ₹42.50",
+      proven
+        ? `Raise only ${tidy(hero.name)}`
+        : "Wait for a lowest-cost winner",
       "Current campaign",
-      hero
-        ? `In Ads Manager, raise only this daily budget by 20%, from ${inr(hero.budget)} to ${inr(hero.budget * 1.2)}. Do not edit targeting or placements. Stop the test if the cost goes above ${inr(Math.min(unit, (data.plan?.cheapBar || unit) * 1.25), 0)}.`
-        : "No campaign is proven under ₹42.50 yet. Do not raise a budget.",
-      hero ? heroDaily * 0.2 : 0
+      proven
+        ? `In Ads Manager, open ${tidy(hero.name)} and raise only its budget by 20%, from ${inr(hero.budget)} to ${inr(hero.budget * 1.2)}. Leave location ${hero.geo || "as it is"}, radius ${hero.radius ? `${hero.radius} km` : "as it is"}, and audience ${winnerAudience(hero)} unchanged. Stop the test if the cost goes above ${stop}.`
+        : "No live campaign is proven at the lowest cost yet. Do not raise a budget.",
+      heroDaily * 0.2
     ),
-    pack(
-      "reel",
-      "New campaign · 9:16 video",
-      "New campaign",
-      hero
-        ? `Duplicate ${tidy(hero.name)} as one new ad set. Use one 9:16 video with audio, automatic placements, and a ₹150 daily budget. Keep it only while the cost stays under ${inr(unit, 2)}.`
-        : "Copy a winner only after one campaign has 5 leads under ₹42.50.",
-      (index) => (hero ? freshDaily * ramp[index] : 0)
-    ),
-    pack(
-      "town",
-      "New campaign · one new town",
-      "New campaign",
-      hero
-        ? `Duplicate ${tidy(hero.name)} into one town only: Angamaly, Muvattupuzha, or Kochi. Budget ₹150. Keep Advantage+ and automatic placements. End it if the cost stays above ${inr(unit, 2)}.`
-        : "Open no new town until the cheapest campaign is proven under ₹42.50.",
-      (index) => (hero ? freshDaily * ramp[index] : 0)
-    ),
-    pack("empty", "Turn off empty ad sets only", "Cleanup", "Switch off ad sets that have no live ad. The lead count does not change, because those ad sets are not delivering.", 0),
+    pack("reel", "New campaign · 9:16 video", "New campaign", hero ? `${newSteps} Creative: one 9:16 video with audio.` : newSteps, (index) => freshDaily * ramp[index]),
+    pack("town", "New campaign · one new town", "New campaign", newSteps, (index) => freshDaily * ramp[index]),
+    pack("empty", "Turn off empty ad sets only", "Cleanup", "In Ads Manager, switch off ad sets that have no live ad. The lead count does not change, because those ad sets are not delivering.", 0),
   ];
 }
 
 function campaignSummary(data) {
-  const unit = data.plan?.premium?.unit ?? 42.5;
+  const hero = cheapHero(data);
   const rows = (data.strategies || [])
     .filter(matches)
     .map((strategy) => ({ strategy, ...todayFigures(strategy, data) }))
     .sort((a, b) => b.leads - a.leads || (b.strategy.leads || 0) - (a.strategy.leads || 0));
   const liveCount = rows.filter((row) => row.strategy.status === "ACTIVE" && row.strategy.activeAds > 0).length;
   const cards = rows.map(({ strategy, leads, spend }) => {
-    const fit = fitsPremium(strategy, unit);
+    const live = strategy.activeAds > 0 && strategy.status === "ACTIVE";
+    const fit = fitsCheap(strategy, data);
+    const radius = strategy.radius ? `${strategy.radius} km` : "city radius";
+    const learning = strategy.learning || "Delivery";
     return `<article class="camp ${fit ? "fit" : ""}">
       <div class="camp-top">
-        <span class="${strategy.activeAds > 0 && strategy.status === "ACTIVE" ? "ok" : "bad"}">${strategy.activeAds > 0 && strategy.status === "ACTIVE" ? "Live" : strategy.status === "ACTIVE" ? "No ad" : "Off"}</span>
+        <span class="${live ? "ok" : "bad"}">${live ? "Live" : strategy.status === "ACTIVE" ? "No ad" : "Off"}</span>
         ${sourceTag(strategy.kind)}
-        ${fit ? `<span class="tag fit-tag">Fits ₹1,700</span>` : ""}
+        ${fit ? `<span class="tag fit-tag">Lowest cost</span>` : ""}
+        ${strategy.id === hero?.id ? `<span class="tag">Recommended</span>` : ""}
       </div>
       <h3>${tidy(strategy.name)}</h3>
-      <p class="muted">${strategy.business} · ${inr(strategy.budget)}/day · ${inr(spend, 0)} today</p>
+      <p class="muted">${strategy.business} · ${strategy.geo || "Location not set"} · ${radius} · ${winnerAudience(strategy)}</p>
+      <p class="muted">${learning} · started ${startedAt(strategy.created)} · ${inr(spend, 0)} today</p>
       <div class="camp-metrics">
         <div><b data-today="${strategy.id}">${leads}</b><span>today</span></div>
         <div><b>${strategy.leads || 0}</b><span>5 days</span></div>
@@ -610,44 +647,85 @@ function campaignSummary(data) {
     </article>`;
   }).join("");
   return `<header class="summary-head">
-      <p class="mark">All campaigns</p>
+      <p class="mark">Running now</p>
       <h2>${rows.length} campaigns · ${liveCount} delivering · <span id="summary-today">${allLeadTotal(data)}</span> leads today</h2>
     </header>
     <section class="summary-grid">${cards || `<p class="empty">No campaigns in this view.</p>`}</section>`;
 }
 
+function choiceButtons(items, key, current) {
+  return `<div class="choice-row">${items.map((item) => `
+    <button type="button" class="${item.id === current ? "on" : ""}" data-${key}="${item.id}">
+      ${item.label}${item.rec ? `<span class="rec">Recommended</span>` : ""}
+    </button>`).join("")}</div>`;
+}
+
+function setupControls(data) {
+  if (buildChoice !== "reel" && buildChoice !== "town") return "";
+  const hero = cheapHero(data);
+  const setup = setupFrom(hero);
+  const locations = setup.locations.map((name) => ({
+    id: name,
+    label: setup.running.includes(name) ? `${name} · already running` : name,
+    rec: name === setup.suggested,
+  }));
+  const radii = [
+    { id: "same", label: hero?.radius ? `${hero.radius} km` : "Same radius", rec: true },
+    { id: "10", label: "10 km" },
+    { id: "17", label: "17 km" },
+    { id: "25", label: "25 km" },
+  ];
+  const audiences = [
+    { id: "same", label: winnerAudience(hero), rec: true },
+    { id: "women", label: "Women 18–65 · Advantage+" },
+    { id: "open", label: "All 18–65 · Advantage+" },
+  ];
+  return `<section class="panel setup-picks">
+    <h2>Location, radius, and audience</h2>
+    <p class="muted">Filled from ${hero ? tidy(hero.name) : "the cheapest live campaign"}. The recommended town is the first one that campaign is not already using.</p>
+    <p class="pick-label">Location</p>
+    ${choiceButtons(locations, "place", buildPlace)}
+    <p class="pick-label">Radius</p>
+    ${choiceButtons(radii, "radius", buildRadius)}
+    <p class="pick-label">Audience</p>
+    ${choiceButtons(audiences, "audience", buildAudience)}
+  </section>`;
+}
+
 function strategyPage(data) {
   const options = strategyOptions(data);
   const chosen = options.find((option) => option.id === buildChoice) || options[0];
+  const short = Math.max(0, Math.round((40 - chosen.perDay) * 10) / 10);
   const days = chosen.series.map((day) => `
     <article class="day">
       <span class="muted">${dayLabel(day.date)}</span>
       <b class="${day.leads >= 40 ? "ok" : day.leads >= 20 ? "wait" : ""}">${day.leads}</b>
-      <div class="muted">leads if the cost holds</div>
+      <div class="muted">leads that day</div>
     </article>`).join("");
   const columns = options.map((option) => `
     <button type="button" class="strategy-col ${option.id === chosen.id ? "on" : ""}" data-strategy="${option.id}">
       <span class="kicker">${option.kicker}</span>
       <strong>${option.title}</strong>
-      <em>${option.total} leads / 5 days</em>
+      <em>${option.perDay} leads / day</em>
     </button>`).join("");
   return `<section class="strategy-page">
     ${campaignSummary(data)}
     <header class="summary-head">
       <p class="mark">Strategy builder</p>
-      <h2>Select one move. The next 5 days update from the live campaigns.</h2>
+      <h2>Select one move. Each day is a lead count, and the goal is 40 a day.</h2>
     </header>
     <div class="strategy-cols">${columns}</div>
+    ${setupControls(data)}
     <section class="panel vision-board">
       <p class="kicker">${chosen.kicker}</p>
       <h2>${chosen.title}</h2>
       <p class="fix ok">${chosen.steps}</p>
-      <p class="muted">This is the plan to set up in Ads Manager. The desk does not change the live campaigns.</p>
+      <p class="muted">These are the Ads Manager steps. The desk does not change the live campaigns. A wider radius or a different audience is a new test, not a promise of more leads.</p>
       <div class="days">${days}</div>
       <article class="lost-hero vision-hero">
-        <span>Total leads in the next 5 days</span>
-        <strong id="strategy-total">${chosen.total}</strong>
-        <em>${chosen.perDay} a day · inside ₹1,700 while each lead stays under ${inr(data.plan?.premium?.unit ?? 42.5, 2)}</em>
+        <span>Leads per day if the cost holds</span>
+        <strong id="strategy-total">${chosen.perDay}</strong>
+        <em>Goal is 40 a day. This move is ${short} a day short of 40 by day 5.</em>
       </article>
     </section>
   </section>`;
@@ -676,15 +754,15 @@ function render(data) {
 
   const stats = `
     <section class="vision">
-      <article class="stat target"><span>Premium goal</span><strong>40</strong><em>leads / day</em></article>
-      <article class="stat"><span>Day budget</span><strong>${inr(1700, 0)}</strong><em>${inr(plan.premium?.unit ?? 42.5, 2)} each</em></article>
-      <article class="stat"><span>Premium today</span><strong class="ok" id="premium-today">${premiumTodayCount(data)}</strong><em>inside the price</em></article>
-      <article class="stat"><span>Still to build</span><strong id="premium-gap">${plan.premium?.gap ?? "—"}</strong><em>leads / day at this price</em></article>
+      <article class="stat target"><span>Goal</span><strong>40</strong><em>leads / day</em></article>
+      <article class="stat"><span>Today</span><strong data-live-today>${pulseTodayCount(data)}</strong><em>live</em></article>
+      <article class="stat"><span>At the lowest cost</span><strong class="ok">${plan.cheapPerDay ?? "—"}</strong><em>leads / day</em></article>
+      <article class="stat"><span>Still to reach 40</span><strong id="goal-gap">${plan.cheapPerDay == null ? "—" : Math.max(0, Math.round((40 - plan.cheapPerDay) * 10) / 10)}</strong><em>leads / day</em></article>
     </section>
     <section class="stats">
       <article class="stat target"><span>Cheap bar</span><strong>${inr(bar, 0)}</strong><em>lowest proven cost</em></article>
       <article class="stat"><span>5-day rate</span><strong>${rate.leadsPerDay}</strong><em>${rate.countedLabel || "average"}</em></article>
-      <article class="stat"><span>Today</span><strong id="today-count">${pulseTodayCount(data)}</strong><em>live</em></article>
+      <article class="stat"><span>Today</span><strong data-live-today>${pulseTodayCount(data)}</strong><em>live</em></article>
       <article class="stat"><span>Cost / lead</span><strong class="${costTone}">${inr(rate.costPerLead, 0)}</strong><em>blended</em></article>
       <article class="stat gap"><span>At that price</span><strong class="ok">${plan.cheapPerDay ?? "—"}</strong><em>leads / day</em></article>
     </section>
@@ -770,7 +848,7 @@ function pulseTodayCount(data) {
 function applyPulse(pulse) {
   latestPulse = pulse;
   const feed = document.querySelector("#feed");
-  const today = document.querySelector("#today-count");
+  const today = document.querySelectorAll("[data-live-today]");
   const started = document.querySelector("#started-list");
   const coming = document.querySelector("#coming-list");
   if (feed) feed.innerHTML = feedHtml(pulse);
@@ -786,21 +864,37 @@ function applyPulse(pulse) {
   if (coming && latestData) coming.innerHTML = comingRows(latestData);
   const allLeads = document.querySelector("#all-leads");
   const allTotal = document.querySelector("#all-lead-total");
-  const premiumNow = document.querySelector("#premium-today");
   if (allLeads && latestData) allLeads.innerHTML = allLeadRows(latestData);
   if (allTotal && latestData) allTotal.textContent = `${allLeadTotal(latestData)} today`;
-  if (premiumNow && latestData) premiumNow.textContent = premiumTodayCount(latestData);
   document.querySelectorAll("[data-today]").forEach((node) => {
     const strategy = (latestData?.strategies || []).find((item) => item.id === node.dataset.today);
     if (strategy) node.textContent = todayFigures(strategy, latestData).leads;
   });
   const summaryToday = document.querySelector("#summary-today");
   if (summaryToday && latestData) summaryToday.textContent = allLeadTotal(latestData);
-  if (today && pulse.todayLeads != null) today.textContent = pulse.todayLeads;
+  if (today.length && pulse.todayLeads != null) today.forEach((node) => { node.textContent = pulse.todayLeads; });
   if (pulse.generatedAt) synced.textContent = `Leads ${clock(pulse.generatedAt)} IST`;
 }
 
 document.querySelector("#app").addEventListener("click", (event) => {
+  const place = event.target.closest("[data-place]");
+  if (place && latestData) {
+    buildPlace = place.dataset.place;
+    render(latestData);
+    return;
+  }
+  const radius = event.target.closest("[data-radius]");
+  if (radius && latestData) {
+    buildRadius = radius.dataset.radius;
+    render(latestData);
+    return;
+  }
+  const audience = event.target.closest("[data-audience]");
+  if (audience && latestData) {
+    buildAudience = audience.dataset.audience;
+    render(latestData);
+    return;
+  }
   const pick = event.target.closest("[data-strategy]");
   if (pick && latestData) {
     buildChoice = pick.dataset.strategy;
