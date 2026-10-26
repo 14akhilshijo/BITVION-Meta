@@ -181,6 +181,7 @@ let view = "live";
 let filter = "all";
 let latestData = null;
 let usingPoll = false;
+let buildChoice = "raise";
 
 function sourceTag(kind) {
   const form = /form/i.test(kind || "");
@@ -519,6 +520,139 @@ function ideasHtml(data) {
     </section>`;
 }
 
+function shiftDate(iso, days) {
+  const date = new Date(`${iso || "2026-10-26"}T12:00:00+05:30`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function dailyLeads(strategy) {
+  const full = Number(strategy.fullDayLeads);
+  if (full > 0) return full / 4;
+  const counted = (strategy.days || []).filter((day) => day.leads > 0).length || 5;
+  return (strategy.leads || 0) / counted;
+}
+
+function strategyOptions(data) {
+  const unit = data.plan?.premium?.unit ?? 42.5;
+  const listed = (data.strategies || []).filter(matches);
+  const premium = listed.filter((strategy) => fitsPremium(strategy, unit));
+  const hero = [...premium].sort((a, b) => a.cpr - b.cpr || b.leads - a.leads)[0] || null;
+  const base = premium.reduce((sum, strategy) => sum + dailyLeads(strategy), 0);
+  const heroDaily = hero ? dailyLeads(hero) : 0;
+  const freshDaily = hero && hero.cpr > 0 ? 150 / hero.cpr : 0;
+  const ramp = [0.3, 0.5, 0.7, 0.9, 1];
+  const start = data.window?.today;
+  const days = [1, 2, 3, 4, 5].map((step) => shiftDate(start, step));
+  const pack = (id, title, kicker, steps, extra) => {
+    const series = days.map((date, index) => {
+      const added = typeof extra === "function" ? extra(index) : extra;
+      return { date, leads: Math.round((base + added) * 10) / 10 };
+    });
+    const total = Math.round(series.reduce((sum, day) => sum + day.leads, 0) * 10) / 10;
+    return { id, title, kicker, steps, series, total, perDay: Math.round((total / 5) * 10) / 10, ready: id === "hold" || id === "empty" || Boolean(hero) };
+  };
+  return [
+    pack("hold", "Keep the premium campaigns", "No edit", "Leave budgets, targeting, and placements as they are. This is the pace already inside ₹42.50.", 0),
+    pack(
+      "raise",
+      hero ? `Raise only ${tidy(hero.name)}` : "Wait for a winner under ₹42.50",
+      "Current campaign",
+      hero
+        ? `In Ads Manager, raise only this daily budget by 20%, from ${inr(hero.budget)} to ${inr(hero.budget * 1.2)}. Do not edit targeting or placements. Stop the test if the cost goes above ${inr(Math.min(unit, (data.plan?.cheapBar || unit) * 1.25), 0)}.`
+        : "No campaign is proven under ₹42.50 yet. Do not raise a budget.",
+      hero ? heroDaily * 0.2 : 0
+    ),
+    pack(
+      "reel",
+      "New campaign · 9:16 video",
+      "New campaign",
+      hero
+        ? `Duplicate ${tidy(hero.name)} as one new ad set. Use one 9:16 video with audio, automatic placements, and a ₹150 daily budget. Keep it only while the cost stays under ${inr(unit, 2)}.`
+        : "Copy a winner only after one campaign has 5 leads under ₹42.50.",
+      (index) => (hero ? freshDaily * ramp[index] : 0)
+    ),
+    pack(
+      "town",
+      "New campaign · one new town",
+      "New campaign",
+      hero
+        ? `Duplicate ${tidy(hero.name)} into one town only: Angamaly, Muvattupuzha, or Kochi. Budget ₹150. Keep Advantage+ and automatic placements. End it if the cost stays above ${inr(unit, 2)}.`
+        : "Open no new town until the cheapest campaign is proven under ₹42.50.",
+      (index) => (hero ? freshDaily * ramp[index] : 0)
+    ),
+    pack("empty", "Turn off empty ad sets only", "Cleanup", "Switch off ad sets that have no live ad. The lead count does not change, because those ad sets are not delivering.", 0),
+  ];
+}
+
+function campaignSummary(data) {
+  const unit = data.plan?.premium?.unit ?? 42.5;
+  const rows = (data.strategies || [])
+    .filter(matches)
+    .map((strategy) => ({ strategy, ...todayFigures(strategy, data) }))
+    .sort((a, b) => b.leads - a.leads || (b.strategy.leads || 0) - (a.strategy.leads || 0));
+  const liveCount = rows.filter((row) => row.strategy.status === "ACTIVE" && row.strategy.activeAds > 0).length;
+  const cards = rows.map(({ strategy, leads, spend }) => {
+    const fit = fitsPremium(strategy, unit);
+    return `<article class="camp ${fit ? "fit" : ""}">
+      <div class="camp-top">
+        <span class="${strategy.activeAds > 0 && strategy.status === "ACTIVE" ? "ok" : "bad"}">${strategy.activeAds > 0 && strategy.status === "ACTIVE" ? "Live" : strategy.status === "ACTIVE" ? "No ad" : "Off"}</span>
+        ${sourceTag(strategy.kind)}
+        ${fit ? `<span class="tag fit-tag">Fits ₹1,700</span>` : ""}
+      </div>
+      <h3>${tidy(strategy.name)}</h3>
+      <p class="muted">${strategy.business} · ${inr(strategy.budget)}/day · ${inr(spend, 0)} today</p>
+      <div class="camp-metrics">
+        <div><b data-today="${strategy.id}">${leads}</b><span>today</span></div>
+        <div><b>${strategy.leads || 0}</b><span>5 days</span></div>
+        <div><b>${strategy.cpr == null ? "—" : inr(strategy.cpr, 0)}</b><span>cost</span></div>
+      </div>
+    </article>`;
+  }).join("");
+  return `<header class="summary-head">
+      <p class="mark">All campaigns</p>
+      <h2>${rows.length} campaigns · ${liveCount} delivering · <span id="summary-today">${allLeadTotal(data)}</span> leads today</h2>
+    </header>
+    <section class="summary-grid">${cards || `<p class="empty">No campaigns in this view.</p>`}</section>`;
+}
+
+function strategyPage(data) {
+  const options = strategyOptions(data);
+  const chosen = options.find((option) => option.id === buildChoice) || options[0];
+  const days = chosen.series.map((day) => `
+    <article class="day">
+      <span class="muted">${dayLabel(day.date)}</span>
+      <b class="${day.leads >= 40 ? "ok" : day.leads >= 20 ? "wait" : ""}">${day.leads}</b>
+      <div class="muted">leads if the cost holds</div>
+    </article>`).join("");
+  const columns = options.map((option) => `
+    <button type="button" class="strategy-col ${option.id === chosen.id ? "on" : ""}" data-strategy="${option.id}">
+      <span class="kicker">${option.kicker}</span>
+      <strong>${option.title}</strong>
+      <em>${option.total} leads / 5 days</em>
+    </button>`).join("");
+  return `<section class="strategy-page">
+    ${campaignSummary(data)}
+    <header class="summary-head">
+      <p class="mark">Strategy builder</p>
+      <h2>Select one move. The next 5 days update from the live campaigns.</h2>
+    </header>
+    <div class="strategy-cols">${columns}</div>
+    <section class="panel vision-board">
+      <p class="kicker">${chosen.kicker}</p>
+      <h2>${chosen.title}</h2>
+      <p class="fix ok">${chosen.steps}</p>
+      <p class="muted">This is the plan to set up in Ads Manager. The desk does not change the live campaigns.</p>
+      <div class="days">${days}</div>
+      <article class="lost-hero vision-hero">
+        <span>Total leads in the next 5 days</span>
+        <strong id="strategy-total">${chosen.total}</strong>
+        <em>${chosen.perDay} a day · inside ₹1,700 while each lead stays under ${inr(data.plan?.premium?.unit ?? 42.5, 2)}</em>
+      </article>
+    </section>
+  </section>`;
+}
+
 function render(data) {
   if (data.error) {
     live.className = "live wait";
@@ -573,6 +707,8 @@ function render(data) {
         <div class="warn-list">${warnHtml(running, plan)}</div>
       </article>
     </section>${ideasHtml(data)}`;
+  } else if (view === "build") {
+    body = strategyPage(data);
   } else if (view === "path") {
     body = ideasHtml(data);
   } else if (view === "days") {
@@ -654,11 +790,23 @@ function applyPulse(pulse) {
   if (allLeads && latestData) allLeads.innerHTML = allLeadRows(latestData);
   if (allTotal && latestData) allTotal.textContent = `${allLeadTotal(latestData)} today`;
   if (premiumNow && latestData) premiumNow.textContent = premiumTodayCount(latestData);
+  document.querySelectorAll("[data-today]").forEach((node) => {
+    const strategy = (latestData?.strategies || []).find((item) => item.id === node.dataset.today);
+    if (strategy) node.textContent = todayFigures(strategy, latestData).leads;
+  });
+  const summaryToday = document.querySelector("#summary-today");
+  if (summaryToday && latestData) summaryToday.textContent = allLeadTotal(latestData);
   if (today && pulse.todayLeads != null) today.textContent = pulse.todayLeads;
   if (pulse.generatedAt) synced.textContent = `Leads ${clock(pulse.generatedAt)} IST`;
 }
 
 document.querySelector("#app").addEventListener("click", (event) => {
+  const pick = event.target.closest("[data-strategy]");
+  if (pick && latestData) {
+    buildChoice = pick.dataset.strategy;
+    render(latestData);
+    return;
+  }
   const opener = event.target.closest("[data-open]");
   if (!opener || !latestData) return;
   view = opener.dataset.open;
