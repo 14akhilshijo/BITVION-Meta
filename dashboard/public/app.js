@@ -288,6 +288,41 @@ function fitsCheap(strategy, data) {
   return (strategy.fullDayLeads || 0) >= 5;
 }
 
+function dailyForty(data) {
+  const rows = (data.strategies || []).filter((strategy) => strategy.status === "ACTIVE" && strategy.activeAds > 0);
+  const pace = (list) => Math.round((list.reduce((sum, strategy) => sum + (strategy.leads || 0), 0) / 5) * 10) / 10;
+  const side = (business) => {
+    const list = rows.filter((strategy) => strategy.business === business);
+    const fit = list.filter((strategy) => fitsCheap(strategy, data));
+    const best = [...fit].sort((a, b) => a.cpr - b.cpr)[0]
+      || [...list].filter((strategy) => strategy.cpr != null).sort((a, b) => a.cpr - b.cpr)[0]
+      || null;
+    return { now: pace(fit), best, weight: fit.length && best?.cpr > 0 ? 1 / best.cpr : 0 };
+  };
+  const clinic = side("clinic");
+  const institute = side("institute");
+  const weight = clinic.weight + institute.weight;
+  let clinicAim = 0;
+  let instituteAim = 0;
+  if (weight > 0) {
+    clinicAim = Math.round((40 * clinic.weight) / weight);
+    instituteAim = 40 - clinicAim;
+  } else if ((institute.best?.cpr || Infinity) < (clinic.best?.cpr || Infinity)) {
+    instituteAim = 40;
+  } else {
+    clinicAim = 40;
+  }
+  const now = Math.round((clinic.now + institute.now) * 10) / 10;
+  const gapOf = (aim, current) => Math.max(0, Math.round((aim - current) * 10) / 10);
+  return {
+    leads: 40,
+    now,
+    gap: gapOf(40, now),
+    clinic: { aim: clinicAim, now: clinic.now, gap: gapOf(clinicAim, clinic.now), name: clinic.best ? tidy(clinic.best.name) : "" },
+    institute: { aim: instituteAim, now: institute.now, gap: gapOf(instituteAim, institute.now), name: institute.best ? tidy(institute.best.name) : "" },
+  };
+}
+
 function allLeadRows(data) {
   const rows = (data.strategies || [])
     .filter(matches)
@@ -406,7 +441,7 @@ function stepLost(strategy, action, winner) {
   return "No extra budget until a campaign holds the cheap price.";
 }
 
-function premiumBlock(plan) {
+function premiumBlock(plan, daily) {
   const premium = plan?.premium;
   if (!premium) return "";
   const card = (item) => `
@@ -421,8 +456,8 @@ function premiumBlock(plan) {
   return `
     <article class="lost-hero vision-hero">
       <span>40 leads each day</span>
-      <strong>${premium.nowPerDay ?? "—"}</strong>
-      <em>a day from the lowest-cost campaigns · ${premium.gap ?? "—"} still to reach 40</em>
+      <strong>${daily?.now ?? premium.nowPerDay ?? "—"}</strong>
+      <em>today from the low-cost campaigns · clinic ${daily?.clinic.aim ?? "—"} · institute ${daily?.institute.aim ?? "—"} · ${daily?.gap ?? premium.gap ?? "—"} still to reach 40</em>
     </article>
     <p class="steps-label">Current campaign changes</p>
     <div class="idea-grid">${current.map(card).join("")}</div>
@@ -501,7 +536,7 @@ function ideasHtml(data) {
         <blockquote>Building businesses. Creating growth.</blockquote>
         <p class="muted">Dr kukku · 40 leads a day · lowest cost first</p>
       </header>
-      ${premiumBlock(plan)}
+      ${premiumBlock(plan, dailyForty(data))}
       <article class="lost-hero">
         <span>Lost in 5 days</span>
         <strong>${inr(loss.total, 0)}</strong>
@@ -699,6 +734,7 @@ function contentPage(data) {
   const selected = week.includes(contentDate) ? contentDate : today;
   const clinic = betterCampaign(data, "clinic");
   const institute = betterCampaign(data, "institute");
+  const daily = dailyForty(data);
   const clinicPiece = creativeFor(clinic.chosen, selected, "clinic");
   const institutePiece = creativeFor(institute.chosen, selected, "institute");
   const cards = week.map((iso) => {
@@ -714,18 +750,18 @@ function contentPage(data) {
   return `<section class="strategy-page">
     <header class="summary-head">
       <p class="mark">Content for each day</p>
-      <h2>${selected === today ? "Today" : weekdayName(selected)} · ${esc(clinicPiece.angle)}</h2>
-      <p class="muted">Clinic and institute stay on separate films. Each side uses the campaign that already reached more accounts at the lower cost. At midnight IST the shoot changes. The campaign changes when a live one beats it.</p>
+      <h2>${selected === today ? "Today" : weekdayName(selected)} · ${daily.leads} leads</h2>
+      <p class="muted">Clinic ${daily.clinic.aim} and institute ${daily.institute.aim} make today’s 40. The larger share sits on the cheaper side. The shoot changes at midnight IST.</p>
     </header>
     <div class="week-board">${cards}</div>
     <div class="side-boards">
-      ${sideBoard("clinic", clinic, clinicPiece)}
-      ${sideBoard("institute", institute, institutePiece)}
+      ${sideBoard("clinic", clinic, clinicPiece, daily.clinic)}
+      ${sideBoard("institute", institute, institutePiece, daily.institute)}
     </div>
   </section>`;
 }
 
-function sideBoard(business, pick, piece) {
+function sideBoard(business, pick, piece, share) {
   const node = (step, title, lines) => `
     <article class="flow-node">
       <p class="step-no">${step}</p>
@@ -733,10 +769,14 @@ function sideBoard(business, pick, piece) {
       <ol>${lines.map((line) => `<li>${esc(line)}</li>`).join("")}</ol>
     </article>`;
   const label = business === "institute" ? "Institute" : "Clinic";
+  const quota = share?.aim > 0
+    ? `${share.aim} of today’s 40 leads. ${share.now} are already coming from the low-cost ads. ${share.gap} still to reach today.`
+    : "None of today’s 40 until this side’s cost comes down to the cheaper campaigns. Keep the film ready.";
   return `<article class="side-board ${business}">
     <p class="mark">${label}</p>
     <h2>${esc(piece.campaign)}</h2>
-    <p class="fix ok">${esc(whyBetter(pick, label))}</p>
+    <p class="fix ok">${esc(quota)}</p>
+    <p class="muted">${esc(whyBetter(pick, label))}</p>
     <section class="flow" aria-label="${label} shoot">
       ${node("Shoot the reel", piece.shoot.title, piece.shoot.lines)}
       <div class="flow-arrow" aria-hidden="true">↓</div>
@@ -908,6 +948,7 @@ function creativeFor(strategy, iso, business) {
 function strategyPage(data) {
   const options = strategyOptions(data);
   const chosen = options.find((option) => option.id === buildChoice) || options[0];
+  const daily = dailyForty(data);
   const short = Math.max(0, Math.round((40 - chosen.perDay) * 10) / 10);
   const days = chosen.series.map((day) => `
     <article class="day">
@@ -938,7 +979,7 @@ function strategyPage(data) {
       <article class="lost-hero vision-hero">
         <span>Leads per day if the cost holds</span>
         <strong id="strategy-total">${chosen.perDay}</strong>
-        <em>Goal is 40 a day. This move is ${short} a day short of 40 by day 5.</em>
+        <em>Each day. Clinic ${daily.clinic.aim}, institute ${daily.institute.aim}. This move holds ${chosen.perDay}. ${short} still short of 40 today.</em>
       </article>
     </section>
   </section>`;
@@ -965,12 +1006,13 @@ function render(data) {
   const bar = plan.cheapBar;
   const costTone = rate.costPerLead == null ? "" : bar != null && rate.costPerLead > bar * 1.2 ? "bad" : "ok";
 
+  const daily = dailyForty(data);
   const stats = `
     <section class="vision">
-      <article class="stat target"><span>Goal</span><strong>40</strong><em>leads / day</em></article>
-      <article class="stat"><span>Today</span><strong data-live-today>${pulseTodayCount(data)}</strong><em>live</em></article>
-      <article class="stat"><span>At the lowest cost</span><strong class="ok">${plan.cheapPerDay ?? "—"}</strong><em>leads / day</em></article>
-      <article class="stat"><span>Still to reach 40</span><strong id="goal-gap">${plan.cheapPerDay == null ? "—" : Math.max(0, Math.round((40 - plan.cheapPerDay) * 10) / 10)}</strong><em>leads / day</em></article>
+      <article class="stat target"><span>Each day</span><strong>40</strong><em>leads today</em></article>
+      <article class="stat"><span>Clinic</span><strong>${daily.clinic.aim}</strong><em>of today’s 40 · ${daily.clinic.now} now</em></article>
+      <article class="stat"><span>Institute</span><strong>${daily.institute.aim}</strong><em>of today’s 40 · ${daily.institute.now} now</em></article>
+      <article class="stat"><span>Still short today</span><strong id="goal-gap">${daily.gap}</strong><em>leads to reach 40</em></article>
     </section>
     <section class="stats">
       <article class="stat target"><span>Cheap bar</span><strong>${inr(bar, 0)}</strong><em>lowest proven cost</em></article>
