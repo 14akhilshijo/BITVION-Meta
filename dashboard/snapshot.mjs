@@ -633,6 +633,110 @@ function buildPlan(running, days, today, target) {
     : cheapBar
       ? `One new ad set only: copy ${scales[0]?.name || "the cheapest winner"} into a new 9:16 video, or one new town, at ₹150. Keep it only if the cost stays under ${money(cheapBar * 1.25)}.`
       : "Wait for 5 leads on one campaign before opening a new one.";
+  const premiumLeads = 40;
+  const premiumBudget = 1700;
+  const unitCap = premiumBudget / premiumLeads;
+  const weakRank = (strategy) =>
+    ["Bottom 10%", "Bottom 20%"].includes(strategy.engagement) ||
+    ["Bottom 10%", "Bottom 20%"].includes(strategy.conversion);
+  const premiumFit = (strategy) =>
+    strategy.activeAds > 0 &&
+    strategy.cpr != null &&
+    strategy.cpr <= unitCap &&
+    strategy.fullDayLeads >= 5 &&
+    !weakRank(strategy) &&
+    (strategy.frequency == null || strategy.frequency < 2.2);
+  const premiumSets = active.filter(premiumFit).sort((a, b) => a.cpr - b.cpr || b.leads - a.leads);
+  const hero = premiumSets[0] || null;
+  const stopAt = Math.min(unitCap, cheapBar == null ? unitCap : cheapBar * 1.25);
+  const premiumPerDay = round(premiumSets.reduce((sum, strategy) => sum + strategy.leads, 0) / 5, 1);
+  const edits = [];
+  if (hero) {
+    edits.push({
+      kind: "current",
+      tone: "ok",
+      title: "One budget test on the cheapest premium campaign",
+      line: `${hero.name} · ${money(hero.cpr)} · ${money(hero.budget)} → ${money(hero.budget * 1.2)}`,
+      note: `Stop if the cost goes above ${money(stopAt)}. Leave targeting and placements unchanged.`,
+    });
+  } else {
+    edits.push({
+      kind: "current",
+      tone: "wait",
+      title: "No budget change until a campaign holds under ₹42.50",
+      line: "No live campaign is both under that price and proven.",
+      note: "Wait for 5 leads under ₹42.50 before the first budget edit.",
+    });
+  }
+  if (premiumSets.length > 1) {
+    edits.push({
+      kind: "current",
+      tone: "ok",
+      title: "Leave the other premium campaigns unchanged",
+      line: premiumSets.slice(1).map((strategy) => `${strategy.name} · ${money(strategy.cpr)}`).join(" · "),
+      note: "They already fit ₹1,700. A second raise makes them bid against the cheapest one.",
+    });
+  }
+  const aboveCap = active.filter((strategy) => strategy.activeAds > 0 && strategy.cpr != null && strategy.cpr > unitCap);
+  if (aboveCap.length) {
+    edits.push({
+      kind: "current",
+      tone: "bad",
+      title: "No extra budget above ₹42.50",
+      line: aboveCap.slice(0, 6).map((strategy) => `${strategy.name} · ${money(strategy.cpr)}`).join(" · "),
+      note: "Leave them on. A higher average cost is not a reason to turn them off. New money stays inside ₹1,700.",
+    });
+  }
+  const weakFit = active.filter(
+    (strategy) => strategy.activeAds > 0 && strategy.cpr != null && strategy.cpr <= unitCap && weakRank(strategy) && strategy.leads >= 5
+  );
+  if (weakFit.length) {
+    edits.push({
+      kind: "current",
+      tone: "wait",
+      title: "New opening before more budget",
+      line: weakFit.map((strategy) => strategy.name).join(" · "),
+      note: "The price fits, and the quality ranking is in the bottom group. Test one 9:16 video with audio in the same ad set. Keep automatic placements.",
+    });
+  }
+  const emptySets = active.filter((strategy) => strategy.activeAds === 0);
+  if (emptySets.length) {
+    edits.push({
+      kind: "current",
+      tone: "bad",
+      title: "Turn off ad sets with no live ad",
+      line: emptySets.map((strategy) => strategy.name).join(" · "),
+      note: "There is no ad to deliver, so this does not stop current leads.",
+    });
+  }
+  const formFit = premiumSets.find((strategy) => strategy.goal === "LEAD_GENERATION");
+  if (formFit) {
+    edits.push({
+      kind: "current",
+      tone: "ok",
+      title: "Send form quality back before the budget step",
+      line: formFit.name,
+      note: "Connect the CRM through the Conversions API so the form can optimise for a premium lead, not only a submitted form.",
+    });
+  }
+  edits.push({
+    kind: "new",
+    tone: "wait",
+    title: hero ? "One new campaign from the winner" : "Wait to open a new campaign",
+    line: hero
+      ? `Copy ${hero.name}. One 9:16 video with audio, or one town: Angamaly, Muvattupuzha, or Kochi. Budget ₹150.`
+      : "Open nothing until one campaign has 5 leads under ₹42.50.",
+    note: `Keep automatic placements. Keep the new ad set only while the cost stays under ${money(stopAt)}. One test at a time.`,
+  });
+  const premium = {
+    leads: premiumLeads,
+    budget: premiumBudget,
+    unit: round(unitCap, 2),
+    nowPerDay: premiumPerDay,
+    gap: round(Math.max(0, premiumLeads - premiumPerDay), 1),
+    edits,
+  };
+
   const form = active.find((strategy) => strategy.goal === "LEAD_GENERATION" && nearCheap(strategy));
   const moves = [
     { tone: "ok", title: "Raise only the cheapest", line: raiseLine },
@@ -650,7 +754,8 @@ function buildPlan(running, days, today, target) {
 
   return {
     target,
-    aim: "lowest cost, most leads",
+    aim: "40 premium leads inside ₹1700 a day",
+    premium,
     cheapBar: cheapBar == null ? null : round(cheapBar, 0),
     cheapPerDay,
     waste: round(wasteSpend, 0),

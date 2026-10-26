@@ -270,6 +270,45 @@ function comingRows(data) {
   }).join("") || `<p class="empty">No campaign has a lead today in this view.</p>`;
 }
 
+function fitsPremium(strategy, unit) {
+  if (!unit || strategy.activeAds === 0 || strategy.cpr == null || strategy.cpr > unit) return false;
+  const weak = ["Bottom 10%", "Bottom 20%"];
+  if (weak.includes(strategy.engagement) || weak.includes(strategy.conversion)) return false;
+  if (strategy.frequency != null && strategy.frequency >= 2.2) return false;
+  return (strategy.fullDayLeads || 0) >= 5;
+}
+
+function allLeadRows(data) {
+  const unit = data.plan?.premium?.unit ?? 42.5;
+  const rows = (data.strategies || [])
+    .filter(matches)
+    .map((strategy) => ({ strategy, ...todayFigures(strategy, data) }))
+    .sort((a, b) => b.leads - a.leads || (b.strategy.leads || 0) - (a.strategy.leads || 0));
+  return rows.map(({ strategy, leads, spend }) => {
+    const fit = fitsPremium(strategy, unit);
+    const cost = strategy.cpr == null ? "no 5-day cost" : `${inr(strategy.cpr, 0)} over 5 days`;
+    return `<article class="warn">
+      <span class="${leads ? "ok" : "muted"}">${leads}</span>
+      <div>
+        <strong>${tidy(strategy.name)}</strong>
+        <p class="muted">${sourceTag(strategy.kind)} ${strategy.business} · ${strategy.leads || 0} in 5 days · ${cost}${fit ? " · fits ₹1,700" : ""}</p>
+      </div>
+      <div class="count">${inr(spend, 0)}<div class="muted">today</div></div>
+    </article>`;
+  }).join("") || `<p class="empty">No campaigns in this view.</p>`;
+}
+
+function premiumTodayCount(data) {
+  const unit = data.plan?.premium?.unit ?? 42.5;
+  return (data.strategies || [])
+    .filter((strategy) => matches(strategy) && fitsPremium(strategy, unit))
+    .reduce((sum, strategy) => sum + todayFigures(strategy, data).leads, 0);
+}
+
+function allLeadTotal(data) {
+  return (data.strategies || []).filter(matches).reduce((sum, strategy) => sum + todayFigures(strategy, data).leads, 0);
+}
+
 function liveBoards(data) {
   const started = (data.strategies || []).filter((strategy) => strategy.status === "ACTIVE" && matches(strategy));
   const coming = (data.strategies || []).filter((strategy) => matches(strategy) && todayFigures(strategy, data).leads > 0);
@@ -282,7 +321,11 @@ function liveBoards(data) {
       <h2>Bringing leads now <span class="muted" id="coming-count">${coming.length}</span></h2>
       <div id="coming-list" class="warn-list">${comingRows(data)}</div>
     </article>
-  </section>`;
+  </section>
+  <article class="panel">
+    <h2>All campaign leads <span class="muted" id="all-lead-total">${allLeadTotal(data)} today</span></h2>
+    <div id="all-leads" class="warn-list">${allLeadRows(data)}</div>
+  </article>`;
 }
 
 function feedHtml(pulse) {
@@ -361,6 +404,30 @@ function stepLost(strategy, action, winner) {
   return "No extra budget until a campaign holds the cheap price.";
 }
 
+function premiumBlock(plan) {
+  const premium = plan?.premium;
+  if (!premium) return "";
+  const card = (item) => `
+    <article class="idea ${item.tone}">
+      <p class="kicker">${item.kind === "new" ? "New campaign" : "Current campaign"}</p>
+      <h3>${item.title}</h3>
+      <p class="fix ${item.tone}">${item.line}</p>
+      <p class="muted">${item.note}</p>
+    </article>`;
+  const current = (premium.edits || []).filter((item) => item.kind !== "new");
+  const fresh = (premium.edits || []).filter((item) => item.kind === "new");
+  return `
+    <article class="lost-hero vision-hero">
+      <span>40 premium leads inside one day</span>
+      <strong>${inr(premium.budget, 0)}</strong>
+      <em>${premium.nowPerDay} a day from campaigns under ${inr(premium.unit, 2)} · ${premium.gap} still to build</em>
+    </article>
+    <p class="steps-label">Current campaign changes</p>
+    <div class="idea-grid">${current.map(card).join("")}</div>
+    <p class="steps-label">New campaign</p>
+    <div class="idea-grid">${fresh.map(card).join("")}</div>`;
+}
+
 function ideasHtml(data) {
   const plan = data.plan || {};
   const loss = lossReport(data);
@@ -430,8 +497,9 @@ function ideasHtml(data) {
       <header class="ideas-head">
         <p class="mark">Bitvion strategical ideas</p>
         <blockquote>Building businesses. Creating growth.</blockquote>
-        <p class="muted">Dr kukku · cheap bar ${inr(plan.cheapBar, 0)} · ${plan.cheapPerDay ?? "—"} leads/day at that price</p>
+        <p class="muted">Dr kukku · 40 premium leads inside ₹1,700 a day · ${inr(plan.premium?.unit, 2)} each</p>
       </header>
+      ${premiumBlock(plan)}
       <article class="lost-hero">
         <span>Lost in 5 days</span>
         <strong>${inr(loss.total, 0)}</strong>
@@ -473,6 +541,12 @@ function render(data) {
   const costTone = rate.costPerLead == null ? "" : bar != null && rate.costPerLead > bar * 1.2 ? "bad" : "ok";
 
   const stats = `
+    <section class="vision">
+      <article class="stat target"><span>Premium goal</span><strong>40</strong><em>leads / day</em></article>
+      <article class="stat"><span>Day budget</span><strong>${inr(1700, 0)}</strong><em>${inr(plan.premium?.unit ?? 42.5, 2)} each</em></article>
+      <article class="stat"><span>Premium today</span><strong class="ok" id="premium-today">${premiumTodayCount(data)}</strong><em>inside the price</em></article>
+      <article class="stat"><span>Still to build</span><strong id="premium-gap">${plan.premium?.gap ?? "—"}</strong><em>leads / day at this price</em></article>
+    </section>
     <section class="stats">
       <article class="stat target"><span>Cheap bar</span><strong>${inr(bar, 0)}</strong><em>lowest proven cost</em></article>
       <article class="stat"><span>5-day rate</span><strong>${rate.leadsPerDay}</strong><em>${rate.countedLabel || "average"}</em></article>
@@ -574,6 +648,12 @@ function applyPulse(pulse) {
     if (comingCount) comingCount.textContent = bringing.length;
   }
   if (coming && latestData) coming.innerHTML = comingRows(latestData);
+  const allLeads = document.querySelector("#all-leads");
+  const allTotal = document.querySelector("#all-lead-total");
+  const premiumNow = document.querySelector("#premium-today");
+  if (allLeads && latestData) allLeads.innerHTML = allLeadRows(latestData);
+  if (allTotal && latestData) allTotal.textContent = `${allLeadTotal(latestData)} today`;
+  if (premiumNow && latestData) premiumNow.textContent = premiumTodayCount(latestData);
   if (today && pulse.todayLeads != null) today.textContent = pulse.todayLeads;
   if (pulse.generatedAt) synced.textContent = `Leads ${clock(pulse.generatedAt)} IST`;
 }
