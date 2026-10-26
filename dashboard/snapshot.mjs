@@ -333,13 +333,13 @@ export async function buildSnapshot(env, targetLeads = 60) {
   const plan = buildPlan(running, days, today, targetLeads);
 
   const byDay = days.map((date) => {
-    const clinicLeads = running
+    const clinicLeads = visible
       .filter((strategy) => strategy.business === "clinic")
-      .reduce((sum, strategy) => sum + strategy.days[date].leads, 0);
-    const instituteLeads = running
+      .reduce((sum, strategy) => sum + (strategy.days[date]?.leads || 0), 0);
+    const instituteLeads = visible
       .filter((strategy) => strategy.business === "institute")
-      .reduce((sum, strategy) => sum + strategy.days[date].leads, 0);
-    const spend = running.reduce((sum, strategy) => sum + strategy.days[date].spend, 0);
+      .reduce((sum, strategy) => sum + (strategy.days[date]?.leads || 0), 0);
+    const spend = visible.reduce((sum, strategy) => sum + (strategy.days[date]?.spend || 0), 0);
     return {
       date,
       partial: date === today,
